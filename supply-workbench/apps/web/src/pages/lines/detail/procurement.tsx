@@ -1,32 +1,36 @@
-import { useContext, useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router';
+import { useContext, useEffect, useRef, useState, type RefObject } from 'react';
+import { Link, createPath, useLocation } from 'react-router';
 import { Alert, Button, Collapse, Descriptions, Form, Input, Typography } from 'antd';
 import { BatchViewSchema, EntityIdSchema, FollowUpViewSchema, type OrderLineDetail } from '@sw/contracts';
 import { isNotProvided } from '@sw/domain';
 import { deliveryBackAddress, followUpAddress, useFollowUpSearch } from '../../../features/follow-up/index.js';
 import { IMPORT_RETURN_PARAM, importFollowUpCandidate } from '../../../features/imports/index.js';
-import { detailReturnState } from '../../../shared/hooks/detail-return-focus.js';
+import { detailDepartureState, detailReturnState, useDetailFocusLinks } from '../../../shared/hooks/detail-return-focus.js';
 import { useCan } from '../../../shared/actor.js';
 import { apiErrorMessage, apiSend } from '../../../shared/api/client.js';
 import { fetchLatestNotes } from '../../../shared/api/catalog.js';
 import { HOME_RISK_RETURN_PARAM, homeRiskBackAddress } from '../../director-home/home-location.js';
 import { PendingLineDetailLink } from './desk-navigation.js';
 import { LineImportMembership } from './import-detail-verification.js';
-import { relatedOrderState, useRelatedImportMembers } from './related-procurement-navigation.js';
+import { relatedOrderFocusLink, relatedOrderState, useRelatedImportMembers, withoutRelatedOrderFocus } from './related-procurement-navigation.js';
+import { useRestoreRelatedOrder } from './related-order-return.js';
 
 const quantityFormat = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 12 });
 
 export function ProcurementSection({ detail }: { readonly detail: OrderLineDetail }) {
   const procurement = detail.procurement;
   const progress = detail.line.storeProgress;
-  if (procurement === undefined && progress === undefined) return null;
+  const section = useRef<HTMLElement>(null);
+  const hasSection = procurement !== undefined || progress !== undefined;
+  const links = <RelatedProcurementLines lines={procurement?.relatedLines ?? []} section={section} />;
+  if (!hasSection) return links;
   const isComponent = detail.line.origin === 'import_procurement_component';
   return (
-    <section aria-label={isComponent ? '采购事项来源' : '关联采购事项'}>
+    <section ref={section} tabIndex={-1} aria-label={isComponent ? '采购事项来源' : '关联采购事项'}>
       {isComponent ? <ComponentFields line={detail.line} /> : null}
       <ProcurementOa progress={progress} />
       <Typography.Title level={2}>{isComponent ? '关联成品' : '关联采购事项'}</Typography.Title>
-      <RelatedProcurementLines lines={procurement?.relatedLines ?? []} />
+      {links}
       {procurement === undefined || procurement.sources.length === 0 ? null : <ProcurementSources sources={procurement.sources} />}
 
     </section>
@@ -40,7 +44,7 @@ function procurementReturnState({ params, state, isImportMember }: {
   if (home !== null) return detailReturnState(state, home);
   const delivery = params.get('backToDelivery');
   if (delivery !== null) return detailReturnState(state, deliveryBackAddress(delivery));
-  return params.has('backToSchedule') || isImportMember ? state : undefined;
+  return params.has('backToSchedule') || isImportMember ? withoutRelatedOrderFocus(state) : undefined;
 }
 
 function procurementDetailQuery(params: URLSearchParams): URLSearchParams {
@@ -60,25 +64,35 @@ function ProcurementOa({ progress }: { readonly progress: OrderLineDetail['line'
 
 type RelatedLine = NonNullable<OrderLineDetail['procurement']>['relatedLines'][number];
 
-function RelatedProcurementLines({ lines }: { readonly lines: readonly RelatedLine[] }) {
+function RelatedProcurementLines({ lines, section }: {
+  readonly lines: readonly RelatedLine[];
+  readonly section: RefObject<HTMLElement | null>;
+}) {
   const [params] = useFollowUpSearch();
   const location = useLocation();
   const { isImportMember, isCheckingImportMembership } = useContext(LineImportMembership);
   const batch = isImportMember ? EntityIdSchema.safeParse(params.get('importBatchId')).data : undefined;
   const members = useRelatedImportMembers({ batch, store: params.get('store'), lines });
-  if (isCheckingImportMembership || members === undefined) {
+  const source = createPath(location);
+  const detailFocusLink = useDetailFocusLinks();
+  const isReady = !isCheckingImportMembership && members !== undefined;
+  useRestoreRelatedOrder(isReady, section);
+  if (lines.length === 0) return null;
+  if (!isReady) {
     return <ul>{lines.map((line) => <li key={line.id}><PendingLineDetailLink>{relatedLineLabel(line)}</PendingLineDetailLink></li>)}</ul>;
   }
   const query = procurementDetailQuery(params);
   const scoped = procurementImportQuery({ query, params, batch });
   const returnState = procurementReturnState({ params, state: location.state, isImportMember });
-  const ordinaryState = relatedOrderState(location, batch !== undefined) ?? returnState;
   return (
     <ul>{lines.map((line) => {
       const isMember = members.has(line.id);
       const href = followUpAddress(`/lines/${encodeURIComponent(line.id)}`, isMember ? scoped : query);
+      const { id, state: focus } = detailFocusLink(source, relatedOrderFocusLink(line.id));
+      const originState = isMember ? undefined : relatedOrderState(location, batch === undefined ? undefined : focus);
+      const state = detailDepartureState(originState ?? returnState, focus.detailOrigin);
       return <li key={line.id}>
-        <Link to={href} state={isMember ? returnState : ordinaryState}>{relatedLineLabel(line)}</Link>
+        <Link to={href} state={state} id={id}>{relatedLineLabel(line)}</Link>
       </li>;
     })}</ul>
   );

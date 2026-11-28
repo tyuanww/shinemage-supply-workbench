@@ -1,12 +1,14 @@
-import { useEffect, useRef, type MouseEvent, type RefObject } from 'react';
-import { useLocation, useNavigationType } from 'react-router';
+import { useCallback, useEffect, useRef, type MouseEvent, type RefObject } from 'react';
+import { createPath, useLocation, useNavigationType } from 'react-router';
 import { z } from 'zod';
+import { browserEntryIndex, useCanRestoreEntryFocus, usePreviousBrowserEntry } from './browser-entry-history.js';
 
 const detailOriginSchema = z.union([
   z.object({ sourceKey: z.string(), detailPath: z.string(), sourceLink: z.string().optional() }),
   z.object({ sourceKey: z.undefined().optional(), detailPath: z.string(), sourceLink: z.string() }),
 ]);
 type DetailOrigin = z.infer<typeof detailOriginSchema>;
+const departureSchema = z.object({ detailDeparture: detailOriginSchema });
 const historyMarker = 'workbenchDetailOrigin';
 const linkId = (detailPath: string) => `detail-link:${detailPath}`;
 
@@ -38,6 +40,7 @@ function linkOrigin(state: unknown) {
 }
 
 function historyOrigin(key: string) {
+  if (typeof window === 'undefined') return undefined;
   const origin = readOrigin(window.history.state?.[historyMarker]);
   return origin?.sourceKey === key ? origin : undefined;
 }
@@ -53,6 +56,63 @@ export function preserveDetailReturnState({ key, state }: { readonly key: string
   const origin = linkOrigin(state) ?? historyOrigin(key);
   if (origin === undefined) return state;
   return { ...(typeof state === 'object' && state !== null ? state : {}), detailOrigin: origin };
+}
+
+export function withoutDetailReturnFocus(state: unknown, sourceLinkPrefix: string): unknown {
+  if (state === null || typeof state !== 'object' || !('detailOrigin' in state)) return state;
+  if (readOrigin(state.detailOrigin)?.sourceLink?.startsWith(sourceLinkPrefix) !== true) return state;
+  const rest = { ...state };
+  Reflect.deleteProperty(rest, 'detailOrigin');
+  return rest;
+}
+
+export type DetailReturnFocus = {
+  readonly hasOrigin: boolean;
+  readonly restore: (fallback: HTMLElement | null) => void;
+};
+
+export function detailDepartureState(state: unknown, departure: DetailOrigin) {
+  return { ...(state !== null && typeof state === 'object' ? state : {}), detailDeparture: departure };
+}
+
+function useArrivalOrigin(sourceLinkPrefix: string) {
+  const location = useLocation();
+  const { key, state } = location;
+  const navigation = useNavigationType();
+  const previous = usePreviousBrowserEntry();
+  const index = browserEntryIndex(key);
+  const isForward = index !== undefined && previous?.index !== undefined && previous.index < index;
+  const candidate = navigation === 'POP' && !isForward ? departureOnBack(previous, { key, index }) : linkOrigin(state);
+  return { key, origin: matchesReturnRoute(candidate, { address: createPath(location), sourceLinkPrefix }) };
+}
+
+function departureOnBack(previous: ReturnType<typeof usePreviousBrowserEntry>, { key, index }: {
+  readonly key: string; readonly index: number | undefined;
+}) {
+  if (index === undefined || previous?.index !== index + 1) return undefined;
+  const departure = departureSchema.safeParse(previous.state).data?.detailDeparture;
+  return departure?.sourceKey === key ? departure : undefined;
+}
+
+function matchesReturnRoute(origin: DetailOrigin | undefined, { address, sourceLinkPrefix }: {
+  readonly address: string; readonly sourceLinkPrefix: string;
+}) {
+  return origin?.detailPath === address && origin.sourceLink?.startsWith(sourceLinkPrefix) === true ? origin : undefined;
+}
+
+export function useOneTimeDetailReturnFocus(sourceLinkPrefix: string): DetailReturnFocus {
+  const { key, origin } = useArrivalOrigin(sourceLinkPrefix);
+  const canRestore = useCanRestoreEntryFocus();
+  const restored = useRef<{ key: string; canRestore: typeof canRestore } | null>(null);
+  const restore = useCallback((fallback: HTMLElement | null) => {
+    if (origin === undefined || (restored.current?.key === key && restored.current.canRestore === canRestore)) return;
+    const target = findReturnTarget(origin, undefined) ?? fallback;
+    if (target === null) return;
+    // Limit focus changes to this visit. A later Back can reuse the same history entry.
+    restored.current = { key, canRestore };
+    if (canRestore()) target.focus();
+  }, [key, origin, canRestore]);
+  return { hasOrigin: origin !== undefined, restore };
 }
 
 type ReturnFocusFallback = {

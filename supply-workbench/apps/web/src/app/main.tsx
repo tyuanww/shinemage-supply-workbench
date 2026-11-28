@@ -12,6 +12,7 @@ import { failureText, read, readFailureOf, ReadError } from '../shared/api/reads
 import { AppRoutes } from './routes.js';
 import { fontFamily } from '../theme/tokens.js';
 import { setBusinessTimeZone } from '../shared/business-time-zone.js';
+import { BrowserEntryHistory } from '../shared/hooks/browser-entry-history.js';
 
 const root = document.querySelector('#root');
 if (root === null) throw new Error('找不到根节点');
@@ -40,9 +41,11 @@ function AppRoot() {
         <AntApp>
           <style>{themePatchCss}</style>
           <BrowserRouter>
-            <div style={{ fontFamily }}>
-              <BootScreen state={state} />
-            </div>
+            <BrowserEntryHistory>
+              <div style={{ fontFamily }}>
+                <BootScreen state={state} />
+              </div>
+            </BrowserEntryHistory>
           </BrowserRouter>
         </AntApp>
       </ConfigProvider>

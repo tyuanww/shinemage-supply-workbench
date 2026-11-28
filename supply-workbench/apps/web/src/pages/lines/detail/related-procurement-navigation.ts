@@ -1,12 +1,14 @@
 import { ProcurementStoreSchema } from '@sw/contracts';
 import { useEffect, useState } from 'react';
-import { matchPath, type Location } from 'react-router';
+import { createPath, matchPath, type Location } from 'react-router';
 import { z } from 'zod';
 import { read } from '../../../shared/api/reads.js';
+import { withoutDetailReturnFocus, type detailReturnState } from '../../../shared/hooks/detail-return-focus.js';
 
 const NO_IMPORT_MEMBERS: ReadonlySet<string> = new Set();
 const MAX_MEMBERS = 100;
 const MAX_QUERY_LENGTH = 3800;
+export const relatedFocusPrefix = 'related-order:';
 const relatedOrderOriginSchema = z.object({
   to: z.string().refine(isLocalOrderAddress),
   state: z.unknown(),
@@ -57,12 +59,23 @@ function readRelatedOrderOrigin(state: unknown) {
   return relatedOrderOriginSchema.safeParse(state.relatedOrderOrigin).data;
 }
 
-export function relatedOrderState(location: Location<unknown>, keepOriginal: boolean) {
-  const origin = readRelatedOrderOrigin(location.state);
+export function relatedOrderState(location: Location<unknown>, returnFocus: ReturnType<typeof detailReturnState>) {
+  const state = withoutRelatedOrderFocus(location.state);
+  const origin = readRelatedOrderOrigin(state);
   if (origin !== undefined) return { relatedOrderOrigin: origin };
-  if (!keepOriginal) return undefined;
-  const { pathname, search, hash, state } = location;
-  return { relatedOrderOrigin: { to: pathname + search + hash, state } };
+  if (returnFocus === undefined) return undefined;
+  return { relatedOrderOrigin: {
+    to: createPath(location),
+    state: { ...(typeof state === 'object' && state !== null ? state : {}), ...returnFocus },
+  } };
+}
+
+export function relatedOrderFocusLink(lineId: string): string {
+  return relatedFocusPrefix + lineId;
+}
+
+export function withoutRelatedOrderFocus(state: unknown): unknown {
+  return withoutDetailReturnFocus(state, relatedFocusPrefix);
 }
 
 export function relatedOrderBack(state: unknown) {

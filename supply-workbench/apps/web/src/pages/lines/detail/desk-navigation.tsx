@@ -11,7 +11,7 @@ import { legacyPersonalPath, TODAY_BATCH_RETURN_PARAM, todayArrivalsPath, todayB
 import { HOME_RISK_RETURN_PARAM, homeRiskBackAddress, homeRiskLineFocus } from '../../director-home/home-location.js';
 import { importFollowUpReturn, readImportBatchOriginState } from '../../imports/import-source.js';
 import { useDetailImportProof } from './import-detail-verification.js';
-import { relatedOrderBack } from './related-procurement-navigation.js';
+import { relatedOrderBack, withoutRelatedOrderFocus } from './related-procurement-navigation.js';
 
 type LineDetailLinkProps = {
   readonly href: string; readonly search: string; readonly children: ReactNode;
@@ -301,7 +301,7 @@ function importDeskScope(params: URLSearchParams): URLSearchParams | null {
 export function useLineDetailSearchParams() {
   const [params, setParams] = useFollowUpSearch();
   const { state } = useLocation();
-  return { params, setParams: (next: URLSearchParams) => setParams(next, { state }) };
+  return { params, setParams: (next: URLSearchParams) => setParams(next, { state: withoutRelatedOrderFocus(state) }) };
 }
 
 function stuckBack(search: string | null, state: unknown): DetailBack | null {

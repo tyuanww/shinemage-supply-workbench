@@ -3,7 +3,7 @@ import { Link, Outlet, useNavigate } from 'react-router';
 import { SearchResultSchema } from '@sw/contracts';
 import { searchGroups, type SearchGroups } from '../features/search/hits.js';
 import { apiGet } from '../shared/api/client.js';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   closeDrawer,
   initialFrame,
@@ -19,27 +19,32 @@ import { matchesShortcut, searchShortcut, type Shortcut } from '../shared/hooks/
 import { bg } from '../theme/tokens.js';
 import { ShellDrawer, ShellSider, ShellTop, type MenuButton } from './shell-frame.js';
 import { WorkspaceBreadcrumb } from './workspace-breadcrumb.js';
+import { SearchDialogBlocksPageFocus } from '../shared/hooks/browser-entry-history.js';
 
 export function Shell(props: {
   readonly view: ShellView & { readonly userId: string };
 }) {
   const viewport = useShellViewport();
   const [frame, setFrame] = useState(() => initialFrame(viewport));
-  const [isSearchOpen, setSearchOpen] = useState(false);
-  useSearchShortcut(setSearchOpen);
+  const [search, setSearch] = useState<'open' | 'closing' | 'closed'>('closed');
+  const openSearch = useCallback(() => setSearch('open'), []);
+  useSearchShortcut(openSearch);
   const synced = syncFrame({ frame, snapshot: viewport });
   if (synced !== frame) setFrame(synced);
   return (
     <Layout style={{ minHeight: '100vh', background: bg.page }}>
-      <ShellColumns
-        view={props.view}
-        viewport={viewport}
-        chrome={shellChrome(synced)}
-        onToggle={() => setFrame(toggleFrame)}
-        onClose={() => setFrame(closeDrawer)}
-        onSearch={() => setSearchOpen(true)}
-      />
-      <SearchLayer open={isSearchOpen} onClose={() => setSearchOpen(false)} />
+      <SearchDialogBlocksPageFocus value={search !== 'closed'}>
+        <ShellColumns
+          view={props.view}
+          viewport={viewport}
+          chrome={shellChrome(synced)}
+          onToggle={() => setFrame(toggleFrame)}
+          onClose={() => setFrame(closeDrawer)}
+          onSearch={openSearch}
+        />
+      </SearchDialogBlocksPageFocus>
+      <SearchLayer open={search === 'open'} onClose={() => setSearch('closing')}
+        afterClose={() => setSearch(current => current === 'closing' ? 'closed' : current)} />
     </Layout>
   );
 }
@@ -95,9 +100,9 @@ function menuButtonOf(input: { readonly chrome: ShellChrome; readonly onToggle: 
   };
 }
 
-function useSearchShortcut(setSearchOpen: (isOpen: boolean) => void): void {
+function useSearchShortcut(openSearch: () => void): void {
   useEffect(() => {
-    const shortcut: Shortcut = searchShortcut(() => setSearchOpen(true));
+    const shortcut: Shortcut = searchShortcut(openSearch);
     const onKey = (event: KeyboardEvent) => {
       if (!matchesShortcut(event, shortcut)) return;
       event.preventDefault();
@@ -105,17 +110,17 @@ function useSearchShortcut(setSearchOpen: (isOpen: boolean) => void): void {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [setSearchOpen]);
+  }, [openSearch]);
 }
 
-function SearchLayer({ open, onClose }: { readonly open: boolean; readonly onClose: () => void }) {
+function SearchLayer({ open, onClose, afterClose }: { readonly open: boolean; readonly onClose: () => void; readonly afterClose: () => void }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [groups, setGroups] = useState<SearchGroups>({ lines: [], products: [], parties: [] });
   const [error, setError] = useState('');
   useSearchQuery({ open, query, setGroups, setError });
   return (
-    <Modal title="搜索" open={open} onCancel={onClose} footer={null} destroyOnHidden>
+    <Modal title="搜索" open={open} onCancel={onClose} afterClose={afterClose} footer={null} destroyOnHidden>
       <Input
         autoFocus
         placeholder="单号 / 品名 / 编码"

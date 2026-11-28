@@ -9,6 +9,7 @@ import { ViewSwitch } from '../../../shared/ui/view-switch.js';
 import { DeliveryOrders } from '../../progress/DeliveryOrders.js';
 import { space, topBar } from '../../../theme/tokens.js';
 import { useCan } from '../../../shared/actor.js';
+import { useCanRestoreEntryFocus } from '../../../shared/hooks/browser-entry-history.js';
 import { importFollowUpReturn, readImportBatchOriginState } from '../../imports/import-source.js';
 import { readReturningLine } from '../detail/desk-navigation.js';
 import { LineAlerts, LineBulkBar } from './actions.js';
@@ -111,13 +112,15 @@ function usePreviewTrigger(isOpen: boolean, results: ResultsRef) {
 
 function useDetailReturnFocus({ results, lineId, key, isSettled }: { readonly results: ResultsRef; readonly lineId: string | null; readonly key: string; readonly isSettled: boolean }) {
   const restored = useRef<string | null>(null);
+  const canRestore = useCanRestoreEntryFocus();
   useEffect(() => {
     const region = results.current;
     if (!isSettled || lineId === null || region === null || restored.current === key) return;
+    restored.current = key;
+    if (!canRestore()) return;
     const row = [...region.querySelectorAll('tr[data-row-key]')].find((candidate) => candidate.getAttribute('data-row-key') === lineId);
     (row?.querySelector<HTMLElement>('th[scope="row"] a') ?? region).focus();
-    restored.current = key;
-  }, [isSettled, key, lineId, results]);
+  }, [isSettled, key, lineId, results, canRestore]);
 }
 
 function useDeskSelection(request: Parameters<typeof useDeskLoad>[0]) {

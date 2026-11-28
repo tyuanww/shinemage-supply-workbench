@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Alert, Button, Select, Space, Typography } from 'antd';
 import { OrderLineDetailSchema, type OrderLineDetail, type MeResponse } from '@sw/contracts';
 import { can } from '@sw/domain';
@@ -8,6 +8,7 @@ import { ApiError, apiErrorMessage, apiSend } from '../../../shared/api/client.j
 import { fetchLineOwners } from '../../../shared/api/catalog.js';
 import { read } from '../../../shared/api/reads.js';
 import { space, topBar } from '../../../theme/tokens.js';
+import { useOrderEntryFocus } from './related-order-return.js';
 
 type Owner = NonNullable<OrderLineDetail['line']['buyer']>;
 type OwnerUndo = NonNullable<OrderLineDetail['ownerUndo']>;
@@ -19,12 +20,7 @@ export function BuyerControls({ detail, onSaved }: Props) {
   const canWrite = useCanWrite('lines.write');
   const [params] = useSearchParams();
   const shouldFocus = params.get('focus') === 'buyer';
-  const section = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (!shouldFocus || section.current === null) return;
-    section.current.focus({ preventScroll: true });
-    section.current.scrollIntoView({ block: 'start' });
-  }, [shouldFocus]);
+  const section = useOrderEntryFocus<HTMLElement>(shouldFocus, 'start');
   const buyerName = detail.pendingBuyerName === undefined
     ? detail.line.buyer?.name ?? '未分配'
     : `${detail.pendingBuyerName}（待处理）`;

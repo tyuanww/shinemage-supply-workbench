@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { Alert, Button, Card, Collapse, Empty, Flex, Input, Result, Select, Skeleton, Space, Tag, Typography } from 'antd';
 import { BatchViewSchema, ProcurementStoreSchema, ShipmentViewSchema, type OrderLineDetail, type ProcurementStore, type TimelineEvent } from '@sw/contracts';
@@ -19,6 +19,7 @@ import { DetailTimeline } from './DetailTimeline.js';
 import { BatchSources } from './batch-sources.js';
 import { orderScheduleAddress, readLineDetailBack, useLineDetailNavigation, useLineDetailSearchParams } from './desk-navigation.js';
 import { LineImportMembership } from './import-detail-verification.js';
+import { RelatedOrderLoadError, RelatedOrderReturnRegion, useOrderEntryFocus } from './related-order-return.js';
 
 const MISSING_PO = '无单号';
 
@@ -47,11 +48,11 @@ function LineDetailContent({ lineId, store, back, isCheckingImportSource }: { re
   const title = detail === null ? '订单行' : lineTitle(detail.po.poRaw);
   const browserTitle = [title, detail?.line.nameRaw].filter(Boolean).join(' · ');
   return (
-    <section aria-label="订单详情" aria-busy={isCheckingImportSource} style={{ maxWidth: 1440 }}>
+    <RelatedOrderReturnRegion isBusy={isCheckingImportSource}>
       {back === null ? null : <Link to={back.to} state={back.state}>{back.label}</Link>}
       <PageHeader title={title} browserTitle={browserTitle} showIdentity />
       {detail === null ? null : <LineIdentity line={detail.line} />}
-      {detail === null && isFailed ? (
+      {detail === null && isFailed ? <RelatedOrderLoadError>
         <Result
           status="error"
           title="订单行没有读出来"
@@ -61,7 +62,7 @@ function LineDetailContent({ lineId, store, back, isCheckingImportSource }: { re
             <Button key="back" onClick={() => window.history.back()}>返回</Button>,
           ]}
         />
-      ) : (
+      </RelatedOrderLoadError> : (
         <>
           {detail === null ? <Skeleton active paragraph={{ rows: 8 }} /> : <LineBody detail={detail} events={events} lineId={lineId} setMessage={setMessage} onReload={load} />}
           {detail === null ? null : <BuyerControls detail={detail} onSaved={(saved) => {
@@ -73,7 +74,7 @@ function LineDetailContent({ lineId, store, back, isCheckingImportSource }: { re
           {message === '' ? null : <Alert style={{ marginTop: 12 }} type="info" showIcon title={message} />}
         </>
       )}
-    </section>
+    </RelatedOrderReturnRegion>
   );
 }
 
@@ -157,14 +158,7 @@ function BatchDetail({ batch, detail, focused, canRecord, hasProcurementSchedule
 }) {
   const canEdit = canRecord && showsRecordEdits(batch.status);
   const confirmedKey = [batch.id, batch.dateBuyerConfirmed, batch.firstConfirmedDate].join(':');
-  const row = useRef<HTMLLIElement>(null);
-  useEffect(() => {
-    if (!focused || row.current === null) return;
-    const active = document.activeElement;
-    if (active !== document.body && active !== row.current) return;
-    row.current.focus({ preventScroll: true });
-    row.current.scrollIntoView({ block: 'center' });
-  }, [focused]);
+  const row = useOrderEntryFocus<HTMLLIElement>(focused, 'center');
   return (
     <li ref={row} tabIndex={-1} style={{ minWidth: 0 }}>
       <Card size="small" title={batchLineText(batch)}>
