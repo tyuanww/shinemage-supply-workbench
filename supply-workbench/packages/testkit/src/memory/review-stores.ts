@@ -16,6 +16,12 @@ export function itemCodeRepository(box: MemoryBox) {
   const repo = idRepository(() => box.current.itemCodes, '编码');
   return {
     ...repo,
+    async insertIfAbsent(code: ItemCode) {
+      const existing = [...box.current.itemCodes.values()].find((row) => row.codeType === code.codeType && row.codeNorm === code.codeNorm);
+      if (existing !== undefined) return existing.id;
+      await repo.save(code);
+      return code.id;
+    },
     async listByNorm(codeNorm: string) {
       return [...box.current.itemCodes.values()].filter((row) => row.codeNorm === codeNorm);
     },
@@ -26,6 +32,11 @@ export function codeLinkRepository(box: MemoryBox) {
   const repo = idRepository(() => box.current.codeLinks, '编码对照');
   return {
     ...repo,
+    async save(link: CodeLink) {
+      const current = box.current.codeLinks.get(link.id);
+      if (link.status === 'pending' && current !== undefined && current.status !== 'pending') return;
+      await repo.save(link);
+    },
     async listApproved() {
       return [...box.current.codeLinks.values()].filter((row) => row.status === 'approved');
     },

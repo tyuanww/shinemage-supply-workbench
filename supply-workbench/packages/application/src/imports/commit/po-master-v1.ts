@@ -2,7 +2,7 @@ import { entityId, orderLineId, poMasterBaseKey, poMasterCandidateKey, type Enti
 import type { PoMasterPayload } from '../../ports/parsed-rows.js';
 import type { CommitContext, CommitResult } from './context.js';
 import { isDateCell, isNumberCell, isPoCell, isTextCell } from './parsed-cells.js';
-import { applyPoRowRelations } from './po-master-v1-relations.js';
+import { applyPoFactories, applyPoRowOwner, poFactoryRelation, type PoFactoryRelation } from './po-master-v1-relations.js';
 import { loadPoMasterComparison, verifyPoMasterComparison } from '../po-master-comparison.js';
 import { procurementSourceKey } from '../../shared/procurement-source.js';
 import { commitPoComponents } from './po-master-components.js';
@@ -27,6 +27,7 @@ async function commitFinishedRows({ ctx, suppliers, isProcurementWorkbook }: {
   const presenceKeys = keysOf(ctx.rows, true);
   const affectedLineIds: string[] = [];
   const presentLineIds: string[] = [];
+  const factoryRelations: PoFactoryRelation[] = [];
   const finishedBySource = new Map<string, string>();
   const comparison = await loadPoMasterComparison(ctx, isProcurementWorkbook);
   for (const row of ctx.rows) {
@@ -44,8 +45,11 @@ async function commitFinishedRows({ ctx, suppliers, isProcurementWorkbook }: {
     presentLineIds.push(lineId);
     if (payload === null) continue;
     if (isProcurementWorkbook) suppliers.observe(payload.supplierRaw.value);
-    await applyPoRowRelations({ ctx, lineId, payload });
+    await applyPoRowOwner({ ctx, lineId, payload });
+    const factory = poFactoryRelation({ lineId, payload });
+    if (factory !== null) factoryRelations.push(factory);
   }
+  await applyPoFactories(ctx, factoryRelations);
   return { affectedLineIds, presentLineIds, finishedBySource };
 }
 

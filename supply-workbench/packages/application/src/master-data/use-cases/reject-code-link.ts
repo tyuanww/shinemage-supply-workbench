@@ -2,7 +2,7 @@ import type { RejectCodeLink, RejectCodeLinkDeps } from '../boundary.js';
 import { auditOf } from '../../shared/audit.js';
 import { authorize } from '../../shared/authorize.js';
 import { refreshLineProjection } from '../../shared/line-projection.js';
-import { relinkByCodes } from './relink-rows.js';
+import { prepareCodeRelink, relinkPreparedRows } from './relink-rows.js';
 import { reviewed } from './reviewed.js';
 
 export const makeRejectCodeLink =
@@ -16,7 +16,8 @@ export const makeRejectCodeLink =
       const right = await tx.itemCodes.get(link.toCodeId);
       const after = reviewed(link, { actorId: actor.id, at, status: 'rejected' });
       await tx.codeLinks.save(after);
-      const lineIds = await relinkByCodes(tx, [left.codeNorm, right.codeNorm]);
+      const rows = await prepareCodeRelink(tx, [left.codeNorm, right.codeNorm]);
+      const lineIds = await relinkPreparedRows(tx, rows);
       if (lineIds.length > 0) await refreshLineProjection(tx, lineIds);
       await tx.audit.record(auditOf({ action: 'code-link.reject', subject: after, ctx: { actor, at, before: link, after, entity: '编码对照' } }));
     });

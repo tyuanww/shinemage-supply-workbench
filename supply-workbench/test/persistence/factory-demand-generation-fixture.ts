@@ -9,18 +9,19 @@ import { requireDatabase } from '../../packages/persistence/src/require-database
 import { auditRepository } from '../../packages/persistence/src/repositories/audit-log.js';
 import { deliveryBatchRepository } from '../../packages/persistence/src/repositories/delivery-batches.js';
 import { factoryReportRepository } from '../../packages/persistence/src/repositories/factory-reports.js';
-import { itemCodeRepository } from '../../packages/persistence/src/repositories/identity.js';
+import { codeLinkRepository, itemCodeRepository } from '../../packages/persistence/src/repositories/identity.js';
 import { importBatchRepository } from '../../packages/persistence/src/repositories/import-batches.js';
+import { lineFactoryLinkRepository } from '../../packages/persistence/src/repositories/line-factory-links.js';
 import { placeholderStores } from '../../packages/persistence/src/repositories/index.js';
 import { itemRepository } from '../../packages/persistence/src/repositories/items.js';
-import { orderLineRepository } from '../../packages/persistence/src/repositories/order-lines.js';
+import { aliasRepository, partyRepository } from '../../packages/persistence/src/repositories/parties.js';
 import { ownerAssignmentRepository } from '../../packages/persistence/src/repositories/owner-assignments.js';
-import { partyRepository } from '../../packages/persistence/src/repositories/parties.js';
+import { orderLineRepository } from '../../packages/persistence/src/repositories/order-lines.js';
 import { purchaseOrderRepository } from '../../packages/persistence/src/repositories/purchase-orders.js';
 import { settingsRepository } from '../../packages/persistence/src/repositories/settings.js';
 import { userRepository } from '../../packages/persistence/src/repositories/users.js';
 import { createUnitOfWork } from '../../packages/persistence/src/unit-of-work.js';
-import { aFactoryStockRow, anActor, anOrderLine, aPurchaseOrder, FixedClock } from '../../packages/testkit/src/index.js';
+import { aFactoryStockRow, anActor, anOrderLine, aParty, aPurchaseOrder, FixedClock } from '../../packages/testkit/src/index.js';
 
 export const url = process.env.SW_PG_URL;
 export const clock = new FixedClock('2026-11-28T00:00:00.000Z');
@@ -28,66 +29,154 @@ export const slot = { index: 0, date: localDate('2026-11-24'), qty: 50 };
 export const rawCells = { dateRaw: '2026/11/24', qtyRaw: '050.00' };
 export const wait = { timeout: 4000, interval: 25 };
 
+export async function seedOtherFactoryReport(db: AppDatabase, { sample, kind }: { readonly sample: Sample; readonly kind: 'shipment' | 'in_transit' | 'stock' }) {
+  const factory = aParty({ id: entityId(`${sample.factoryId}-other`), isFactory: true });
+  await partyRepository(db).save(factory);
+  const imports = importBatchRepository(db);
+  const own = await imports.get(sample.importId);
+  const importId = entityId(`${sample.importId}-other`);
+  await imports.save({ ...own, id: importId, factoryPartyId: factory.id });
+  const rowId = entityId(`0-${sample.id}-report`);
+  await factoryReportRepository(db).save(aFactoryStockRow({
+    id: rowId, importBatchId: importId, factoryPartyId: factory.id, fingerprint: rowId, kind,
+  }));
+  return { rowId, factory };
+}
+
 type Hooks = {
   readonly afterOriginRead?: () => Promise<void>;
   readonly afterMaterialOrderLock?: () => Promise<void>;
   readonly afterDemandSave?: () => Promise<void>;
   readonly afterLineLock?: (id: string) => Promise<void>;
   readonly afterLineSave?: (id: string) => Promise<void>;
+  readonly afterFactoryLinkSave?: () => Promise<void>;
+  readonly beforeSnapshotTransactionCommit?: () => Promise<void>;
+  readonly afterSnapshotSourceLock?: () => Promise<void>;
+  readonly afterCodeLinkSave?: () => Promise<void>;
+  readonly afterItemCodeRead?: (norm: string) => Promise<void>;
+  readonly afterItemCodeInsertAttempt?: () => Promise<void>;
+  readonly afterSourceFreeze?: () => Promise<void>;
 };
 
 export function writes(db: AppDatabase, hooks: Hooks = {}) {
   const uow = createUnitOfWork(db, (transaction) => {
     const tx = requireDatabase(transaction);
-    const batches = deliveryBatchRepository(tx);
-    const reports = factoryReportRepository(tx);
+    const factoryLinks = lineFactoryLinkRepository(tx);
     return {
       ...placeholderStores(),
-      batches: {
-        ...batches,
-        async lockDemandGeneration(scope: Parameters<typeof batches.lockDemandGeneration>[0]) {
-          await batches.lockDemandGeneration(scope);
-          if ('materialOrderNumbers' in scope) await hooks.afterMaterialOrderLock?.();
-        },
-        async listByOriginRef(ref: { readonly rowId: string; readonly slotIndex: number }) {
-          const found = await batches.listByOriginRef(ref);
-          await hooks.afterOriginRead?.();
-          return found;
-        },
-      },
-      factoryReports: {
-        ...reports,
-        async save(row: Parameters<typeof reports.save>[0]) {
-          await reports.save(row);
-          await hooks.afterDemandSave?.();
-        },
-      },
-      orderLines: linesWithHooks(tx, hooks),
+      batches: batchesWithHooks(tx, hooks),
+      factoryReports: reportsWithHooks(tx, hooks),
+      codeLinks: codeLinksWithHooks(tx, hooks),
+      itemCodes: itemCodesWithHooks(tx, hooks),
       items: itemRepository(tx),
-      itemCodes: itemCodeRepository(tx),
-      ownerAssignments: ownerAssignmentRepository(tx),
+      factoryLinks: {
+        ...factoryLinks,
+        async save(row: Parameters<typeof factoryLinks.save>[0]) {
+          const isSaved = await factoryLinks.save(row);
+          if (isSaved) await hooks.afterFactoryLinkSave?.();
+          return isSaved;
+        },
+      },
       parties: partyRepository(tx),
+      aliases: aliasRepository(tx),
+      orderLines: orderLinesWithHooks(tx, hooks),
+      ownerAssignments: ownerAssignmentRepository(tx),
       users: userRepository(tx),
       settings: settingsRepository(tx),
       purchaseOrders: purchaseOrderRepository(tx),
-      audit: auditRepository(tx),
+      imports: importBatchRepository(tx),
+      audit: auditWithHooks(tx, hooks),
     };
   });
   return { uow, clock, ids: systemIds() };
 }
 
-function linesWithHooks(tx: AppDatabase, hooks: Hooks) {
-  const orderLines = orderLineRepository(tx);
+function reportsWithHooks(tx: AppDatabase, hooks: Hooks) {
+  const repo = factoryReportRepository(tx);
   return {
-    ...orderLines,
-    async lock(...args: Parameters<typeof orderLines.lock>) {
-      const line = await orderLines.lock(...args);
+    ...repo,
+    async save(row: Parameters<typeof repo.save>[0]) {
+      await repo.save(row);
+      await hooks.afterDemandSave?.();
+    },
+    async lockSnapshotSource(factoryPartyId: string) {
+      await repo.lockSnapshotSource(factoryPartyId);
+      await hooks.afterSnapshotSourceLock?.();
+    },
+  };
+}
+
+function codeLinksWithHooks(tx: AppDatabase, hooks: Hooks) {
+  const repo = codeLinkRepository(tx);
+  return {
+    ...repo,
+    async save(link: Parameters<typeof repo.save>[0]) {
+      await repo.save(link);
+      await hooks.afterCodeLinkSave?.();
+    },
+  };
+}
+
+function itemCodesWithHooks(tx: AppDatabase, hooks: Hooks) {
+  const repo = itemCodeRepository(tx);
+  return {
+    ...repo,
+    async listByNorm(norm: string) {
+      const codes = await repo.listByNorm(norm);
+      await hooks.afterItemCodeRead?.(norm);
+      return codes;
+    },
+    async insertIfAbsent(code: Parameters<typeof repo.insertIfAbsent>[0]) {
+      const codeId = await repo.insertIfAbsent(code);
+      await hooks.afterItemCodeInsertAttempt?.();
+      return codeId;
+    },
+  };
+}
+
+function auditWithHooks(tx: AppDatabase, hooks: Hooks) {
+  const audit = auditRepository(tx);
+  return {
+    ...audit,
+    async record(entry: Parameters<typeof audit.record>[0]) {
+      await audit.record(entry);
+      if (entry.action === 'import.commit') await hooks.beforeSnapshotTransactionCommit?.();
+    },
+  };
+}
+
+function batchesWithHooks(tx: AppDatabase, hooks: Hooks) {
+  const batches = deliveryBatchRepository(tx);
+  return {
+    ...batches,
+    async lockDemandGeneration(scope: Parameters<typeof batches.lockDemandGeneration>[0]) {
+      await batches.lockDemandGeneration(scope);
+      if ('materialOrderNumbers' in scope) await hooks.afterMaterialOrderLock?.();
+    },
+    async listByOriginRef(ref: { readonly rowId: string; readonly slotIndex: number }) {
+      const found = await batches.listByOriginRef(ref);
+      await hooks.afterOriginRead?.();
+      return found;
+    },
+    async freezeDemandSource(input: Parameters<typeof batches.freezeDemandSource>[0]) {
+      await batches.freezeDemandSource(input);
+      await hooks.afterSourceFreeze?.();
+    },
+  };
+}
+
+function orderLinesWithHooks(tx: AppDatabase, hooks: Hooks) {
+  const orders = orderLineRepository(tx);
+  return {
+    ...orders,
+    async lock(...args: Parameters<typeof orders.lock>) {
+      const line = await orders.lock(...args);
       const [id] = args;
       await hooks.afterLineLock?.(id);
       return line;
     },
-    async save(line: Parameters<typeof orderLines.save>[0]) {
-      await orderLines.save(line);
+    async save(line: Parameters<typeof orders.save>[0]) {
+      await orders.save(line);
       await hooks.afterLineSave?.(line.id);
     },
   };
@@ -181,7 +270,11 @@ async function clearSample(handle: AppHandle, sample: Sample): Promise<void> {
     delete from users where id = '${sample.buyer.id}';
     delete from purchase_orders where id = '${sample.orderId}' or po_norm in ('${sample.poRaw}', upper('ALT-${sample.id}'));
     delete from factory_material_demand_rows where import_batch_id = '${sample.importId}';
-    delete from import_batches where id = '${sample.importId}';
+    delete from factory_shipment_rows where id = '0-${sample.id}-report';
+    delete from factory_in_transit_rows where id = '0-${sample.id}-report';
+    delete from factory_stock_rows where id = '0-${sample.id}-report';
+    delete from import_batches where id in ('${sample.importId}', '${sample.importId}-other');
+    delete from parties where id in ('${sample.factoryId}', '${sample.factoryId}-other');
   `);
 }
 

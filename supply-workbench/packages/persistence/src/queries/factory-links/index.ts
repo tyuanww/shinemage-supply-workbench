@@ -44,6 +44,7 @@ async function listOrderLineRefs(db: AppDatabase): Promise<readonly OrderLineMat
       linkId: link?.id ?? null,
       linkStatus: link === undefined ? null : statusOf(link.status),
       linkReason: link?.reason ?? null,
+      ...(link === undefined ? {} : { linkSource: sourceOf(link.source) }),
     };
   });
 }

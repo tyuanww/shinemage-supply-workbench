@@ -6,9 +6,11 @@ import { migrate } from '../../packages/persistence/src/migrate.js';
 import { factoryReportRepository, insertFactoryShipments } from '../../packages/persistence/src/repositories/factory-reports.js';
 import { importBatchRepository } from '../../packages/persistence/src/repositories/import-batches.js';
 import { itemRepository } from '../../packages/persistence/src/repositories/items.js';
+import { orderLineRepository } from '../../packages/persistence/src/repositories/order-lines.js';
 import { partyRepository } from '../../packages/persistence/src/repositories/parties.js';
 import { purchaseOrderRepository } from '../../packages/persistence/src/repositories/purchase-orders.js';
 import {
+  anOrderLine,
   describeFactoryReportRepositoryContract,
   describeImportBatchRepositoryContract,
   describeItemRepositoryContract,
@@ -28,7 +30,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await handle.exec('truncate table parties, items, purchase_orders, factory_stock_rows, factory_shipment_rows, factory_in_transit_rows, factory_material_demand_rows, import_batches, import_rows, products, weekly_reports restart identity cascade');
+  await handle.exec('truncate table parties, items, purchase_orders, order_lines, factory_stock_rows, factory_shipment_rows, factory_in_transit_rows, factory_material_demand_rows, import_batches, import_rows, products, weekly_reports restart identity cascade');
 });
 
 describePartyRepositoryContract(() => partyRepository(handle.db));
@@ -118,6 +120,7 @@ it('需求生成只从生成时读到的同一数据库行版本核对原文', a
   await repo.save(row);
   const selected = await repo.getForDemandGeneration(row.id);
   const forLine = { rowId: row.id, orderLineId: orderLineId('line-1') };
+  await orderLineRepository(handle.db).save(anOrderLine({ id: forLine.orderLineId }));
   if (selected.version === null) throw new Error('需求行缺少数据库版本');
   const input = { ...forLine, version: selected.version };
   expect((await repo.demandSourcesAtGeneration(input)).get(0)?.slot.originalCells).toEqual({ dateRaw: '2026/11/24', qtyRaw: '050.00' });

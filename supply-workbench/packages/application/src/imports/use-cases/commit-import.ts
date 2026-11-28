@@ -10,14 +10,20 @@ import { ImportHasConflictsError, StateConflictError } from '../../shared/errors
 import { revisionOf, saveImportRevision } from './revision.js';
 import { refreshLineProjection } from '../../shared/line-projection.js';
 import { commitExecutors } from '../commit/index.js';
-import { findFactorySnapshotReplay, retireFactorySnapshot } from './factory-snapshots.js';
+import { FactorySnapshotReplayChanged, prepareFactorySnapshot, retireFactorySnapshot } from './factory-snapshots.js';
 import { appliedPoMasterBatches } from './po-existing.js';
 
 export const makeCommitImport =
   (deps: CommitImportDeps): CommitImport =>
   async (input, actor) => {
     authorize(actor, 'imports.write');
-    await deps.uow.run((tx) => commitBatch({ tx, input, actor, clock: deps.clock }));
+    const commit = (tx: UnitOfWorkStores) => commitBatch({ tx, input, actor, clock: deps.clock });
+    try {
+      await deps.uow.run(commit);
+    } catch (error) {
+      if (!(error instanceof FactorySnapshotReplayChanged)) throw error;
+      await deps.uow.run(commit);
+    }
     return { importBatchId: input.importBatchId };
   };
 
@@ -29,17 +35,19 @@ async function commitBatch({ tx, input, actor, clock }: {
 }): Promise<void> {
   const batch = await lockedBatch(tx, input.importBatchId);
   if (!canTransitionImport(batch.status, 'commit')) throw new StateConflictError(batch.status);
-  const at = clock.now();
+  const startedAt = clock.now();
   const revision = revisionOf(batch.revision) + 1;
   const procurementReplay = batch.template === 'po-master-v1' ? await tx.procurement?.originalBatchId(batch.fileId) ?? null : null;
   if (procurementReplay !== null) {
+    const at = startedAt;
     const discarded = { ...batch, revision, status: 'discarded' as const, fileMeta: { ...metadata(batch.fileMeta), procurementReplayOf: procurementReplay }, error: null, updatedAt: at };
     await saveImportRevision({ repo: tx.imports, next: discarded, expectedRevision: input.expectedRevision });
     await tx.audit.record(auditOf({ action: 'import.discard', subject: discarded, ctx: { actor, at, before: batch, after: discarded, entity: '导入批次' } }));
     return;
   }
   const rows = await committableRows({ tx, batch });
-  const replay = await findFactorySnapshotReplay({ tx, batch });
+  const replay = await prepareFactorySnapshot({ tx, batch, rows, at: startedAt, actor });
+  const at = batch.template === 'factory-progress-v1' ? clock.now() : startedAt;
   if (replay !== undefined) {
     const discarded = { ...batch, revision, status: 'discarded' as const, error: `重复快照，已复用 ${replay.existing.id}`, updatedAt: at };
     await saveImportRevision({ repo: tx.imports, next: discarded, expectedRevision: input.expectedRevision });

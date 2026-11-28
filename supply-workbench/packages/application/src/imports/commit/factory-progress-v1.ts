@@ -1,7 +1,6 @@
 import { entityId, orderLineId, parseLocalDate, type EntityId, type FactoryDemandFacts, type FactoryDemandSlot, type FactoryInTransitFacts, type FactoryReportKind, type FactoryReportRow, type FactoryShipmentFacts, type ImportRow, type LocalDate } from '@sw/domain';
 import { ImportFactoryRequiredError } from '../../shared/errors.js';
 import { fingerprintOnRow, linksToCarry, type CarryLink } from './carry-links.js';
-import { saveFactoryCodeLinks } from './code-links.js';
 import type { CommitContext, CommitResult } from './context.js';
 
 const SHEET_KIND: readonly { readonly title: string; readonly kind: FactoryReportKind }[] = [
@@ -24,7 +23,6 @@ export async function commitFactory(ctx: CommitContext): Promise<CommitResult> {
     if (row === undefined || fingerprint === undefined) continue;
     await saveRow({ ctx, row, partyId, link: carried[index] ?? null, fingerprint: fingerprint.value });
   }
-  await saveFactoryCodeLinks(ctx);
   return { affectedLineIds: [], presentLineIds: [] };
 }
 

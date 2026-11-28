@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import type { AppDatabase } from '../../client.js';
 import { importBatches } from '../../schema/archive.js';
 
@@ -27,6 +27,17 @@ type FactoryBatchScopeRow = {
 export async function activeFactoryBatchIds(db: Pick<AppDatabase, 'select'>): Promise<ReadonlySet<string>> {
   const rows = await db.select(FACTORY_BATCH_COLUMNS).from(importBatches).where(eq(importBatches.template, 'factory-progress-v1'));
   return latestFactoryBatchIds(rows);
+}
+
+export async function isActiveFactoryBatch(db: Pick<AppDatabase, 'select'>, batchId: string): Promise<boolean> {
+  const template = eq(importBatches.template, 'factory-progress-v1');
+  const [batch] = await db.select(FACTORY_BATCH_COLUMNS).from(importBatches).where(and(template, eq(importBatches.id, batchId)));
+  if (batch === undefined || batch.factoryPartyId === null || !isFactoryBatchCandidate(batch)) return false;
+  const scope = batch.sourceKey === null
+    ? and(isNull(importBatches.sourceKey), eq(importBatches.factoryPartyId, batch.factoryPartyId))
+    : eq(importBatches.sourceKey, batch.sourceKey);
+  const rows = await db.select(FACTORY_BATCH_COLUMNS).from(importBatches).where(and(template, scope));
+  return latestFactoryBatchIds(rows).has(batchId);
 }
 
 function latestFactoryBatchIds(rows: readonly FactoryBatchScopeRow[]): ReadonlySet<string> {

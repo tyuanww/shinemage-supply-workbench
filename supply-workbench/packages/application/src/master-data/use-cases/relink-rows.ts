@@ -10,11 +10,23 @@ import {
   type OrderLineId,
 } from '@sw/domain';
 import type { UnitOfWorkStores } from '../../ports/unit-of-work.js';
+import { compareFactoryReportWrites } from '../../shared/factory-report-order.js';
 
-export async function relinkByCodes(tx: UnitOfWorkStores, codeNorms: readonly string[]): Promise<string[]> {
+export async function prepareCodeRelink(tx: UnitOfWorkStores, codeNorms: readonly string[]): Promise<readonly FactoryReportRow[]> {
+  const sources = new Set<string>();
+  for (;;) {
+    const rows = (await rowsFor(tx, codeNorms)).filter((row) => linkFacts(row) !== null);
+    const pending = rows.flatMap((row) => sources.has(row.factoryPartyId) ? [] : [row.factoryPartyId]);
+    if (pending.length === 0) return rows.sort(compareFactoryReportWrites);
+    await tx.factoryReports.lockReportSources(pending);
+    for (const id of pending) sources.add(id);
+  }
+}
+
+export async function relinkPreparedRows(tx: UnitOfWorkStores, rows: readonly FactoryReportRow[]): Promise<string[]> {
   const links = await approvedLinks(tx);
   const lineIds: string[] = [];
-  for (const row of await rowsFor(tx, codeNorms)) {
+  for (const row of rows) {
     lineIds.push(...(await affectedLines({ tx, row, links })));
   }
   return lineIds;

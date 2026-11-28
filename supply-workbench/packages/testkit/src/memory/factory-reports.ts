@@ -10,6 +10,10 @@ export function factoryReportRepository(box: MemoryBox) {
       return { row: await repo.get(id), version: null };
     },
     async demandSourcesAtGeneration() { return new Map<never, never>(); },
+    lockSnapshotSource: async () => {},
+    lockReportSources: async () => {},
+    effectiveReportOwners: async () => [],
+    lockSnapshotOrders: async () => {},
     async linkUnassignedTransit(rowId: string, lineId: OrderLineId) {
       const row = await repo.find(rowId);
       if (row?.kind !== 'in_transit' || row.linkedOrderLineId !== null) return false;

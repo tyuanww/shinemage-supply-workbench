@@ -10,15 +10,31 @@ import { applyOwnerAssignment, ownerAssignmentsOf } from '../../shared/owner-ass
  * 工厂按主体显示名精确匹配；匹配失败写 unlinked + 原因，读路径能看到未关联原因。
  * 已有手工负责人/手工工厂关联优先，导入不覆盖人工决定。
  */
-export async function applyPoRowRelations(input: {
+export async function applyPoRowOwner(input: {
   readonly ctx: CommitContext;
   readonly lineId: string;
   readonly payload: PoMasterPayload;
 }): Promise<void> {
   const ownerName = textOf(input.payload.ownerRaw?.value ?? null);
-  const factoryName = textOf(input.payload.factoryRaw?.value ?? null);
   if (ownerName !== null) await applyPoOwner({ ctx: input.ctx, lineId: input.lineId, name: ownerName });
-  if (factoryName !== null) await applyPoFactory({ ctx: input.ctx, lineId: input.lineId, name: factoryName, payload: input.payload });
+}
+
+export type PoFactoryRelation = {
+  readonly lineId: string;
+  readonly name: string;
+  readonly payload: PoMasterPayload;
+};
+
+export function poFactoryRelation(input: { readonly lineId: string; readonly payload: PoMasterPayload }): PoFactoryRelation | null {
+  const name = textOf(input.payload.factoryRaw?.value ?? null);
+  return name === null ? null : { ...input, name };
+}
+
+export async function applyPoFactories(ctx: CommitContext, relations: readonly PoFactoryRelation[]): Promise<void> {
+  // 和自动重联按相同订单行顺序写工厂关联。
+  for (const relation of [...relations].sort((left, right) => left.lineId.localeCompare(right.lineId))) {
+    await applyPoFactory({ ...relation, ctx });
+  }
 }
 
 export async function applyPoOwner(input: { readonly ctx: CommitContext; readonly lineId: string; readonly name: string; readonly lookupName?: string }): Promise<void> {

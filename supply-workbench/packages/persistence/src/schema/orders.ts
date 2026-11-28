@@ -60,6 +60,10 @@ export const orderLines = pgTable(
   ],
 );
 
+export const factoryOwnershipGuards = pgTable('factory_ownership_guards', {
+  orderLineId: text('order_line_id').primaryKey().references(() => orderLines.id, { onDelete: 'cascade' }),
+});
+
 export const orderLineSnapshots = pgTable('order_line_snapshots', {
   id: text('id').primaryKey(),
   orderLineId: text('order_line_id').notNull(),

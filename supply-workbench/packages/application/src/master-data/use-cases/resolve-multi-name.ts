@@ -8,7 +8,7 @@ import { authorize } from '../../shared/authorize.js';
 import { refreshLineProjection } from '../../shared/line-projection.js';
 import { backfillItem } from './backfill.js';
 import { itemDraft } from './drafts.js';
-import { relinkByCodes } from './relink-rows.js';
+import { prepareCodeRelink, relinkPreparedRows } from './relink-rows.js';
 import { requireText } from './require-text.js';
 
 export const makeResolveMultiName =
@@ -22,7 +22,8 @@ export const makeResolveMultiName =
       await applyDecision(tx, { itemId, input, at });
       if (code.itemId === null) await tx.itemCodes.save({ ...code, itemId, status: 'approved', updatedAt: at });
       const filled = code.itemId === null ? await backfillItem(tx, { codeNorm: code.codeNorm, itemId, at }) : [];
-      const linked = await relinkByCodes(tx, [code.codeNorm]);
+      const rows = await prepareCodeRelink(tx, [code.codeNorm]);
+      const linked = await relinkPreparedRows(tx, rows);
       const lineIds = [...filled, ...linked];
       if (lineIds.length > 0) await refreshLineProjection(tx, lineIds);
       await tx.audit.record(auditOf({ action: 'code.resolve-names', subject: code, ctx: { actor, at, before: code, after: { itemId, mode: input.mode }, entity: '编码' } }));

@@ -23,6 +23,7 @@ export type OrderLineMatchRef = {
   readonly linkId: string | null;
   readonly linkStatus: LineFactoryLinkStatus | null;
   readonly linkReason: string | null;
+  readonly linkSource?: LineFactoryLinkSource;
 };
 
 /** relink 的工厂行候选。不排除已自动关联的行，否则第二次运行会把已有 link 当成无候选。 */

@@ -13,33 +13,79 @@ type Pair = RawLink & {
   readonly to: ParsedItemCode;
 };
 
+type PendingCode = {
+  readonly parsed: ParsedItemCode;
+  readonly raw: string;
+};
+
 export async function saveFactoryCodeLinks(ctx: CommitContext): Promise<void> {
-  const seen = new Set<string>();
-  for (const link of linksOf(ctx.batch.fileMeta)) {
-    const pair = pairOf(link);
-    if (pair === null || seen.has(pairKey(pair))) continue;
-    seen.add(pairKey(pair));
-    await savePair(ctx, pair);
+  const pairs = codePairs(ctx.batch.fileMeta);
+  const codes = new Map<string, PendingCode>();
+  for (const pair of pairs) {
+    addCode(codes, { parsed: pair.from, raw: pair.fromCodeRaw });
+    addCode(codes, { parsed: pair.to, raw: pair.toCodeRaw });
+  }
+  // 并发快照可能包含相同编码。先按固定顺序写编码，再按固定顺序写对照。
+  const ids = await saveCodes(ctx, codes);
+  for (const [key, pair] of sortedEntries(pairs.map((pair) => [linkKey(pair), pair] as const))) {
+    await ensureLink({ ctx, pair, id: entityId(key), ids: {
+      fromId: savedCodeId(ids, pair.from),
+      toId: savedCodeId(ids, pair.to),
+    } });
   }
 }
 
-async function savePair(ctx: CommitContext, pair: Pair): Promise<void> {
-  await ensureLink({ ctx, pair, ids: {
-    fromId: await ensureCode({ ctx, parsed: pair.from, raw: pair.fromCodeRaw }),
-    toId: await ensureCode({ ctx, parsed: pair.to, raw: pair.toCodeRaw }),
-  } });
+function codePairs(fileMeta: unknown): readonly Pair[] {
+  const pairs = new Map<string, Pair>();
+  for (const link of linksOf(fileMeta)) {
+    const pair = pairOf(link);
+    if (pair === null) continue;
+    const key = `${pair.from.codeType}:${pair.from.codeNorm}|${pair.to.codeType}:${pair.to.codeNorm}`;
+    if (!pairs.has(key)) pairs.set(key, pair);
+  }
+  return [...pairs.values()];
+}
+
+function addCode(codes: Map<string, PendingCode>, code: PendingCode): void {
+  const key = codeKey(code.parsed);
+  if (!codes.has(key)) codes.set(key, code);
+}
+
+async function saveCodes(ctx: CommitContext, codes: ReadonlyMap<string, PendingCode>): Promise<ReadonlyMap<string, EntityId>> {
+  const ids = new Map<string, EntityId>();
+  for (const [key, { parsed, raw }] of sortedEntries(codes)) ids.set(key, await ensureCode({ ctx, parsed, raw }));
+  return ids;
+}
+
+function savedCodeId(ids: ReadonlyMap<string, EntityId>, parsed: ParsedItemCode): EntityId {
+  const id = ids.get(codeKey(parsed));
+  if (id === undefined) throw new Error('工厂编码未保存');
+  return id;
+}
+
+function codeKey(code: ParsedItemCode): string {
+  return `code:${code.codeType}:${code.codeNorm}`;
+}
+
+function linkKey(pair: Pair): string {
+  return `link:${pair.from.codeNorm}:${pair.to.codeNorm}`;
+}
+
+function sortedEntries<Value>(entries: Iterable<readonly [string, Value]>): (readonly [string, Value])[] {
+  return [...entries].sort(([left], [right]) => {
+    if (left === right) return 0;
+    return left < right ? -1 : 1;
+  });
 }
 
 async function ensureCode({ ctx, parsed, raw }: { readonly ctx: CommitContext; readonly parsed: ParsedItemCode; readonly raw: string }): Promise<EntityId> {
   const existing = (await ctx.tx.itemCodes.listByNorm(parsed.codeNorm)).find((row) => row.codeType === parsed.codeType);
   if (existing !== undefined) return existing.id;
-  const id = entityId(`code:${parsed.codeType}:${parsed.codeNorm}`);
-  await ctx.tx.itemCodes.save(newCode({ id, parsed, raw, at: ctx.at }));
-  return id;
+  const id = entityId(codeKey(parsed));
+  return ctx.tx.itemCodes.insertIfAbsent(newCode({ id, parsed, raw, at: ctx.at }));
 }
 
-async function ensureLink({ ctx, pair, ids }: { readonly ctx: CommitContext; readonly pair: Pair; readonly ids: { readonly fromId: EntityId; readonly toId: EntityId } }): Promise<void> {
-  const id = entityId(`link:${pair.from.codeNorm}:${pair.to.codeNorm}`);
+async function ensureLink({ ctx, pair, id, ids }: { readonly ctx: CommitContext; readonly pair: Pair; readonly id: EntityId; readonly ids: { readonly fromId: EntityId; readonly toId: EntityId } }): Promise<void> {
   const existing = await ctx.tx.codeLinks.find(id);
   if (existing !== undefined && existing.status !== 'pending') return;
   await ctx.tx.codeLinks.save(pendingLink({ ctx, pair, fromId: ids.fromId, toId: ids.toId, id, existing }));
@@ -68,10 +114,6 @@ function pairOf(link: RawLink): Pair | null {
   const to = parseItemCode(link.toCodeRaw).value;
   if (from === null || from === undefined || to === null || to === undefined) return null;
   return { ...link, from, to };
-}
-
-function pairKey(pair: Pair): string {
-  return `${pair.from.codeType}:${pair.from.codeNorm}|${pair.to.codeType}:${pair.to.codeNorm}`;
 }
 
 function linksOf(fileMeta: unknown): RawLink[] {
