@@ -4,7 +4,7 @@ export interface OrderLineRepository {
   /** 找不到就抛 NotFoundError。 */
   get(id: string): Promise<OrderLine>;
   /** 在写事务中锁定订单行并读取最新记录。 */
-  lock(id: string): Promise<OrderLine>;
+  lock(id: string, options?: { readonly noWait?: boolean }): Promise<OrderLine>;
   /** 找不到返回 undefined。 */
   find(id: string): Promise<OrderLine | undefined>;
   /** 插入或按 id 覆盖。事务由 UnitOfWork.run 负责。 */

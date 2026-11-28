@@ -9,6 +9,7 @@ export function commandContext<Id extends EntityId>({ actor, at, nextId }: { rea
 }
 
 export async function persistBatch({ tx, records, dateChanges, expectedUpdatedAt }: { readonly tx: UnitOfWorkStores; readonly records: BatchRecords; readonly dateChanges: readonly BatchDateChange[]; readonly expectedUpdatedAt?: string }): Promise<void> {
+  await tx.orderLines.lock(records.batch.orderLineId);
   const payload = { ...records, dateChanges };
   if (expectedUpdatedAt !== undefined && tx.batches.saveWithRecordsConditional !== undefined) {
     const isSaved = await tx.batches.saveWithRecordsConditional(payload, expectedUpdatedAt);

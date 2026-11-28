@@ -1,11 +1,12 @@
-import { createBatch, type DeliveryBatchId, type EntityId, type OrderLine, type OrderLineId } from '@sw/domain';
+import { createBatch, type DeliveryBatchId, type EntityId, type OrderLine } from '@sw/domain';
 import type { Actor } from '../../shared/actor.js';
 import type { UnitOfWorkStores } from '../../ports/unit-of-work.js';
 import type { CreateHintBatches, CreateHintBatchesDeps } from '../boundary.js';
 import { auditOf } from '../../shared/audit.js';
 import { authorize } from '../../shared/authorize.js';
-import { NotFoundError, ValidationFailedError } from '../../shared/errors.js';
+import { ValidationFailedError } from '../../shared/errors.js';
 import { firstBatchReadiness, isOpenForFirstBatch } from '../../shared/first-batch.js';
+import { lockOrderLines } from '../../shared/locked-order-lines.js';
 import { commandContext, persistBatch } from './persist-batch.js';
 
 type HintMode = { readonly kind: 'today'; readonly warehouseId: EntityId | null }
@@ -19,7 +20,7 @@ export const makeCreateHintBatches =
     let created = 0;
     const skipped: { lineId: string; reason: string }[] = [];
     await deps.uow.run(async (tx) => {
-      const lines = await lockLines(tx.orderLines, input.lineIds);
+      const lines = await lockOrderLines(tx.orderLines, input.lineIds);
       const mode = hintMode(input, (await tx.settings.get()).ownWarehousePartyId);
       for (const lineId of input.lineIds) {
         const outcome = await hintOne({ tx, line: lines.get(lineId), mode, actor, at, batchId: deps.ids.deliveryBatch() });
@@ -34,18 +35,6 @@ function hintMode(input: Parameters<CreateHintBatches>[0], warehouseId: EntityId
   if (input.source === 'today') return { kind: 'today', warehouseId };
   if (warehouseId === null) throw new ValidationFailedError('没有设置我方仓库', { field: 'ownWarehousePartyId' });
   return { kind: 'legacy', warehouseId, includeCompleted: input.includeCompleted };
-}
-
-async function lockLines(repository: UnitOfWorkStores['orderLines'], ids: readonly OrderLineId[]): Promise<ReadonlyMap<OrderLineId, OrderLine>> {
-  const lines = new Map<OrderLineId, OrderLine>();
-  for (const id of [...new Set(ids)].sort()) {
-    try {
-      lines.set(id, await repository.lock(id));
-    } catch (error) {
-      if (!(error instanceof NotFoundError)) throw error;
-    }
-  }
-  return lines;
 }
 
 async function hintOne(input: {

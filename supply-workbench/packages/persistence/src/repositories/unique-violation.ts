@@ -1,5 +1,9 @@
 export function violatesUnique(error: unknown, constraint: string): boolean {
-  return readString(error, 'code') === '23505' && constraintName(error) === constraint;
+  return postgresErrorCode(error) === '23505' && constraintName(error) === constraint;
+}
+
+export function postgresErrorCode(error: unknown): string | undefined {
+  return readString(error, 'code');
 }
 
 function constraintName(error: unknown): string | undefined {

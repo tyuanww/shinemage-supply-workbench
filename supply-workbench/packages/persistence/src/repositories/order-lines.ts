@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { NotFoundError, StateConflictError } from '@sw/application/errors';
+import { NotFoundError, OrderLineLockBusy, StateConflictError } from '@sw/application/errors';
 import { LANES, LINE_ORIGINS, LINE_STAGES, localDate, normalizeText, projectLatestImportPresence, type OrderLine, type OrderLineSnapshot } from '@sw/domain';
 import type { OrderLineRepository } from '../../../application/src/ports/order-line-repository.js';
 import type { AppDatabase } from '../client.js';
@@ -8,16 +8,12 @@ import { instant, instantOrNull } from '../mappers/time.js';
 import { reportedOrderStatus } from '../mappers/reported-order-status.js';
 import { orderLineSnapshots, orderLines } from '../schema/orders.js';
 import { deliveryBatchIdOrNull, entityId, entityIdOrNull, orderLineId } from '../mappers/id.js';
-import { violatesUnique } from './unique-violation.js';
+import { postgresErrorCode, violatesUnique } from './unique-violation.js';
 
 export function orderLineRepository(db: AppDatabase): OrderLineRepository {
   return {
     get: (id) => getLine(db, id),
-    async lock(id) {
-      const [row] = await db.select().from(orderLines).where(eq(orderLines.id, id)).for('update');
-      if (row === undefined) throw new NotFoundError('订单行', id);
-      return orderLineOfRow(row);
-    },
+    lock: (id, options) => lockLine(db, { id, noWait: options?.noWait === true }),
     find: (id) => findLine(db, id),
     save: (entity) => saveLine(db, entity),
     saveConditional: (entity, expectedUpdatedAt) => saveLineConditional({ db, entity, expectedUpdatedAt }),
@@ -27,6 +23,17 @@ export function orderLineRepository(db: AppDatabase): OrderLineRepository {
     saveSnapshot: (snapshot) => saveSnapshot(db, snapshot),
     reportedStatus: (lineId) => reportedStatus(db, lineId),
   };
+}
+
+async function lockLine(db: AppDatabase, { id, noWait }: { readonly id: string; readonly noWait: boolean }): Promise<OrderLine> {
+  try {
+    const [row] = await db.select().from(orderLines).where(eq(orderLines.id, id)).for('update', noWait ? { noWait: true } : undefined);
+    if (row === undefined) throw new NotFoundError('订单行', id);
+    return orderLineOfRow(row);
+  } catch (error) {
+    if (noWait && postgresErrorCode(error) === '55P03') throw new OrderLineLockBusy(id);
+    throw error;
+  }
 }
 
 async function getLine(db: AppDatabase, id: string): Promise<OrderLine> {

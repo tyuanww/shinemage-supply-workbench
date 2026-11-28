@@ -45,7 +45,7 @@ it('更新用例把条件写入失败转换成可识别的状态冲突', async (
   });
   await expect(updateLine({ lineId: line.id, nameRaw: '冲突' }, actor)).rejects.toBeInstanceOf(StateConflictError);
 
-  const batch = aBatch().build();
+  const batch = { ...aBatch().build(), orderLineId: line.id };
   await memory.stores.batches.save(batch);
   const updateBatch = makeUpdateBatch({
     uow: {

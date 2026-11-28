@@ -2,7 +2,7 @@ import { parsePoCell, type EntityId, type Lane, type PurchaseOrder } from '@sw/d
 import type { UnitOfWorkStores } from '../../ports/unit-of-work.js';
 
 type PoKey =
-  | { readonly kind: 'none' }
+  | { readonly kind: 'none'; readonly poNorm: null }
   | {
       readonly kind: 'norm';
       readonly poRaw: string;
@@ -22,7 +22,7 @@ export async function findPurchaseOrders(
   tx: UnitOfWorkStores,
   input: { readonly poRaw: string | null; readonly lane: Lane },
 ): Promise<{ readonly orders: readonly PurchaseOrder[] } | { readonly reason: string }> {
-  const found = await existingOrders({ tx, key: poKey(input.poRaw), lane: input.lane });
+  const found = await existingOrders({ tx, key: purchaseOrderKey(input.poRaw), lane: input.lane });
   if (found.length > 1) return { reason: '采购单不唯一' };
   return { orders: found };
 }
@@ -32,7 +32,7 @@ export async function createPurchaseOrder(
   input: ResolveInput,
 ): Promise<EntityId> {
   const id = input.nextId();
-  await tx.purchaseOrders.save(purchaseOrderOf({ id, key: poKey(input.poRaw), input }));
+  await tx.purchaseOrders.save(purchaseOrderOf({ id, key: purchaseOrderKey(input.poRaw), input }));
   return id;
 }
 
@@ -41,11 +41,11 @@ async function existingOrders({ tx, key, lane }: { readonly tx: UnitOfWorkStores
   return (await tx.purchaseOrders.listByPoNorm(key.poNorm)).filter((order) => order.lane === lane);
 }
 
-function poKey(raw: string | null): PoKey {
+export function purchaseOrderKey(raw: string | null): PoKey {
   const trimmed = raw?.trim() ?? '';
-  if (trimmed === '') return { kind: 'none' };
+  if (trimmed === '') return { kind: 'none', poNorm: null };
   const parsed = parsePoCell(trimmed).value;
-  if (parsed.poFormat === 'NONE' || parsed.poNorm === null) return { kind: 'none' };
+  if (parsed.poFormat === 'NONE' || parsed.poNorm === null) return { kind: 'none', poNorm: null };
   return { kind: 'norm', poRaw: trimmed, poNorm: parsed.poNorm, parsed };
 }
 

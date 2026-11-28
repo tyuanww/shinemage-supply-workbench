@@ -31,8 +31,8 @@ export interface DeliveryBatchRepository {
   listByOrderLine(orderLineId: string): Promise<readonly DeliveryBatch[]>;
   /** 从这一个需求槽生成过的批次，含已取消。没有就返回空数组。 */
   listByOriginRef(ref: { readonly rowId: string; readonly slotIndex: number }): Promise<readonly DeliveryBatch[]>;
-  /** 仅串行化同一工厂需求行的生成请求，锁保留到事务结束。 */
-  lockDemandGeneration(rowIds: readonly string[]): Promise<void>;
+  /** 事务结束前持有锁。先锁全部来源行，再锁全部规范物料单号，之后才能匹配和锁定订单行。null 共用无单号物料单的锁。 */
+  lockDemandGeneration(scope: { readonly rowIds: readonly string[] } | { readonly materialOrderNumbers: readonly (string | null)[] }): Promise<void>;
   /** 这条出货行已经采纳成哪条未作废发货。没有返回 undefined。 */
   findAdoptedShipment(factoryShipmentRowId: string): Promise<{ readonly shipmentId: string; readonly batchId: string } | undefined>;
   /** 发货、收货或送货单属于哪个批次。找不到返回 undefined。 */

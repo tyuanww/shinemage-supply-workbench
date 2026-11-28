@@ -28,7 +28,7 @@ export function deliveryBatchRepository(db: AppDatabase): DeliveryBatchRepositor
     lockWithRecords: async (id) => recordsOf(db, await lockBatch(db, id)),
     listByOrderLine: (orderLineId) => listByLine(db, orderLineId),
     listByOriginRef: (ref) => listBySlot(db, ref),
-    lockDemandGeneration: (rowIds) => lockDemandGeneration(db, rowIds),
+    lockDemandGeneration: (scope) => lockDemandGeneration(db, scope),
     findAdoptedShipment: (rowId) => adopted(db, rowId),
     findBatchIdOf: (kind, recordId) => batchIdOf({ db, kind, recordId }),
     save: (entity) => saveBatch(db, entity),
@@ -144,13 +144,16 @@ async function listBySlot(db: AppDatabase, ref: { readonly rowId: string; readon
   return rows.map(toBatch);
 }
 
-async function lockDemandGeneration(db: AppDatabase, rowIds: readonly string[]): Promise<void> {
-  if (rowIds.length === 0) return;
+async function lockDemandGeneration(db: AppDatabase, scope: Parameters<DeliveryBatchRepository['lockDemandGeneration']>[0]): Promise<void> {
+  const isRowScope = 'rowIds' in scope;
+  const namespace = isRowScope ? 'supply.follow-up.demand-generation:' : 'supply.follow-up.material-order:';
+  const keys = isRowScope ? scope.rowIds : scope.materialOrderNumbers.map((number) => JSON.stringify(number));
+  if (keys.length === 0) return;
   await db.execute(sql`
     select pg_advisory_xact_lock(lock_key)
     from (
-      select distinct hashtextextended('supply.follow-up.demand-generation:' || row_id, 0) as lock_key
-      from jsonb_array_elements_text(${JSON.stringify(rowIds)}::jsonb) as demand_rows(row_id)
+      select distinct hashtextextended(${namespace} || value, 0) as lock_key
+      from jsonb_array_elements_text(${JSON.stringify(keys)}::jsonb) as generation_keys(value)
       order by lock_key
     ) generation_lock_keys
   `);
