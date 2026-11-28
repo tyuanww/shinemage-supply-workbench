@@ -38,4 +38,9 @@ export interface FactoryReportRepository {
    * 出货和库存的编码不在冻结事实上，不从 raw 猜。
    */
   listByCodeNorm(codeNorm: string): Promise<readonly FactoryReportRow[]>;
+  /** 来源锁定后，按在途、需求及行 ID 的顺序锁定可重联候选，返回仍匹配的当前行。 */
+  lockRelinkRows(input: {
+    readonly codeNorms: readonly string[];
+    readonly candidates: readonly Pick<FactoryReportRow, 'id' | 'kind' | 'factoryPartyId'>[];
+  }): Promise<readonly FactoryReportRow[]>;
 }

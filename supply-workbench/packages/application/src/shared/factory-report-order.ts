@@ -7,5 +7,7 @@ const reportOrder: Readonly<Record<FactoryReportKind, number>> = {
 type ReportRef = { readonly kind: FactoryReportKind; readonly id: string };
 
 export function compareFactoryReportWrites(left: ReportRef, right: ReportRef): number {
-  return reportOrder[left.kind] - reportOrder[right.kind] || left.id.localeCompare(right.id);
+  const kindOrder = reportOrder[left.kind] - reportOrder[right.kind];
+  if (kindOrder !== 0 || left.id === right.id) return kindOrder;
+  return left.id < right.id ? -1 : 1;
 }

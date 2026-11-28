@@ -6,7 +6,7 @@ import type { UnitOfWorkStores } from '../../ports/unit-of-work.js';
 import { auditOf } from '../../shared/audit.js';
 import { authorize } from '../../shared/authorize.js';
 import { refreshLineProjection } from '../../shared/line-projection.js';
-import { backfillItem } from './backfill.js';
+import { backfillItems } from './backfill.js';
 import { itemDraft } from './drafts.js';
 import { prepareCodeRelink, relinkPreparedRows } from './relink-rows.js';
 import { requireText } from './require-text.js';
@@ -17,11 +17,11 @@ export const makeResolveMultiName =
     authorize(actor, 'master.review');
     const at = deps.clock.now();
     await deps.uow.run(async (tx) => {
-      const code = await tx.itemCodes.get(input.codeId);
+      const code = await tx.itemCodes.lock(input.codeId);
       const itemId = await ensureItem(tx, { ids: deps.ids, itemId: code.itemId, codeRaw: code.codeRaw, input, at });
       await applyDecision(tx, { itemId, input, at });
       if (code.itemId === null) await tx.itemCodes.save({ ...code, itemId, status: 'approved', updatedAt: at });
-      const filled = code.itemId === null ? await backfillItem(tx, { codeNorm: code.codeNorm, itemId, at }) : [];
+      const filled = code.itemId === null ? await backfillItems(tx, { items: [{ codeNorm: code.codeNorm, itemId }], at }) : [];
       const rows = await prepareCodeRelink(tx, [code.codeNorm]);
       const linked = await relinkPreparedRows(tx, rows);
       const lineIds = [...filled, ...linked];
@@ -40,7 +40,7 @@ async function ensureItem(tx: UnitOfWorkStores, ctx: { readonly ids: IdGenerator
 }
 
 async function applyDecision(tx: UnitOfWorkStores, ctx: { readonly itemId: EntityId; readonly input: ResolveMultiNameInput; readonly at: string }): Promise<void> {
-  const item = await tx.items.get(ctx.itemId);
+  const item = await tx.items.lock(ctx.itemId);
   if (ctx.input.mode === 'shared_code') {
     await tx.items.save({ ...item, sharedCodeFlag: true, updatedAt: ctx.at });
     await tx.itemNames.saveDecision(ctx.itemId, 'shared_code');

@@ -23,12 +23,13 @@ import {
 } from './services.js';
 
 export function storesOf(box: MemoryBox): UnitOfWorkStores {
+  const items = idRepository(() => box.current.items, '物料');
   return {
     users: userRepository(box),
     settings: settingsRepository(box),
     parties: idRepository(() => box.current.parties, '主体'),
     aliases: aliasRepository(box),
-    items: idRepository(() => box.current.items, '物料'),
+    items: { ...items, lock: items.get },
     itemCodes: itemCodeRepository(box),
     itemNames: itemNameRepository(box),
     codeLinks: codeLinkRepository(box),
@@ -54,24 +55,30 @@ export function memoryUnitOfWork(box: MemoryBox): UnitOfWork {
   let pending = Promise.resolve();
   return {
     async run(fn) {
-      if (box.depth > 0) return runTurn(box, fn);
-      const turn = pending.then(() => runTurn(box, fn));
+      if (box.transaction.getStore()?.active === true) return runTurn(box, fn);
+      const turn = pending.then(() => runTransaction(box, fn));
       pending = turn.then(() => undefined, () => undefined);
       return turn;
     },
   };
 }
 
+async function runTransaction<T>(box: MemoryBox, fn: (stores: UnitOfWorkStores) => Promise<T>): Promise<T> {
+  const transaction = { active: true };
+  try {
+    return await box.transaction.run(transaction, () => runTurn(box, fn));
+  } finally {
+    transaction.active = false;
+  }
+}
+
 async function runTurn<T>(box: MemoryBox, fn: (stores: UnitOfWorkStores) => Promise<T>): Promise<T> {
   const before = structuredClone(box.current);
-  box.depth += 1;
   try {
     return await fn(storesOf(box));
   } catch (error) {
     box.current = before;
     throw error;
-  } finally {
-    box.depth -= 1;
   }
 }
 

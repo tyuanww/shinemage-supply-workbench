@@ -16,6 +16,17 @@ export function itemCodeRepository(db: AppDatabase): ItemCodeRepository {
       if (found === undefined) throw new NotFoundError('编码', id);
       return found;
     },
+    async lock(id) {
+      const [row] = await db.select().from(itemCodes).where(eq(itemCodes.id, id)).for('update');
+      if (row === undefined) throw new NotFoundError('编码', id);
+      return toCode(row);
+    },
+    async lockMany(ids) {
+      if (ids.length === 0) return [];
+      const rows = await db.select().from(itemCodes)
+        .where(sql`${itemCodes.id} = any(${sql.param(ids)}::text[])`).orderBy(itemCodes.id).for('update');
+      return rows.map(toCode);
+    },
     find: (id) => findCode(db, id),
     async save(entity) {
       await db.insert(itemCodes).values(entity).onConflictDoUpdate({ target: itemCodes.id, set: entity });

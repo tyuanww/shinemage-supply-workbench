@@ -71,9 +71,10 @@ async function linkById(db: AppDatabase, id: string) {
 }
 
 async function multiById(db: AppDatabase, id: string) {
-  const found = (await multiName(db)).find((row) => row.codeId === id);
-  if (found === undefined) throw new Error(`一号多名不存在 ${id}`);
-  return found;
+  const [code] = await db.select().from(itemCodes).where(eq(itemCodes.id, id));
+  if (code === undefined) throw new NotFoundError('编码', id);
+  const names = code.itemId === null ? [] : await db.select().from(itemNames).where(eq(itemNames.itemId, code.itemId));
+  return multiNameView(code, names);
 }
 
 async function aliasById(db: AppDatabase, id: string) {
@@ -157,11 +158,13 @@ async function itemDetail(db: AppDatabase, itemId: string) {
 async function multiName(db: AppDatabase) {
   const [codes, names] = await Promise.all([db.select().from(itemCodes), db.select().from(itemNames)]);
   return codes.flatMap((code) => {
-    const matched = names.filter((row) => row.itemId === code.itemId);
-    const grouped = groupNames(matched);
-    if (grouped.length < 2) return [];
-    return [{ codeId: code.id, codeRaw: code.codeRaw, names: grouped }];
+    const view = multiNameView(code, names.filter((row) => row.itemId === code.itemId));
+    return view.names.length < 2 ? [] : [view];
   });
+}
+
+function multiNameView(code: Pick<typeof itemCodes.$inferSelect, 'id' | 'codeRaw'>, names: readonly (typeof itemNames.$inferSelect)[]) {
+  return { codeId: code.id, codeRaw: code.codeRaw, names: groupNames(names) };
 }
 
 function groupNames(rows: readonly (typeof itemNames.$inferSelect)[]) {

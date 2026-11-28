@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { devAuth } from '@sw/auth';
-import { FactoryReportRowViewSchema } from '@sw/contracts';
-import { createDb, factoryReportRepository, importBatchRepository, migrate, orderLineRepository, partyRepository, purchaseOrderRepository, seed, userDirectory, type SqlExec } from '@sw/persistence';
-import { aParty, aPurchaseOrder, anOrderLine } from '../../../packages/testkit/src/index.js';
+import { FactoryReportRowViewSchema, MultiNameViewSchema } from '@sw/contracts';
+import { createDb, factoryReportRepository, importBatchRepository, itemCodeRepository, itemNameRepository, itemRepository, migrate, orderLineRepository, partyRepository, purchaseOrderRepository, schema, seed, userDirectory, type SqlExec } from '@sw/persistence';
+import { aParty, aPurchaseOrder, anItem, anOrderLine } from '../../../packages/testkit/src/index.js';
 import { composeImports } from '../src/composition/imports.js';
 import { composeMasterData } from '../src/composition/master-data.js';
 import { buildHttpApp } from '../src/http/app.js';
@@ -81,6 +81,72 @@ it('采购按角色读主体，不能新建主体', async () => {
   expect(denied.statusCode).toBe(403);
   await app.close();
   await handle.close();
+});
+
+it('审核员可保存一号多名的两种决定，并回读物料', async () => {
+  const handle = await createDb({ driver: 'pglite' });
+  await migrate(handle.exec);
+  await seed(handle.exec);
+  const master = composeMasterData({ db: handle.db, timeZone: 'Asia/Shanghai' });
+  const app = await buildHttpApp({
+    auth: devAuth({ directory: userDirectory(handle.db), accessCode: 'dev-code', secret: '0123456789abcdef0123456789abcdef' }),
+    register: (server) => registerMasterDataRoutes(server, master),
+  });
+  try {
+    const item = anItem({ displayName: '合成原显示名', kind: 'packaging' });
+    const codeId = entityId('multi-name-review-code');
+    const codeRaw = '30006101';
+    const items = itemRepository(handle.db);
+    const codes = itemCodeRepository(handle.db);
+    const names = itemNameRepository(handle.db);
+    await items.save(item);
+    const code = {
+      id: codeId, createdAt: item.createdAt, updatedAt: item.updatedAt, codeType: 'pack_30', codeRaw, codeNorm: codeRaw, itemId: item.id, status: 'approved',
+    } satisfies Parameters<typeof codes.save>[0];
+    await codes.save(code);
+    await names.save({ itemId: item.id, nameRaw: '合成名甲', nameNorm: '合成名甲', seenCount: 2 });
+    await names.save({ itemId: item.id, nameRaw: '合成名乙', nameNorm: '合成名乙', seenCount: 3 });
+    const headers = { cookie: await loginAs(app, 'reviewer') };
+    const url = `/api/v1/master/multi-name/${codeId}/resolve`;
+
+    const same = await app.inject({ method: 'POST', url, headers, payload: { mode: 'same_item', displayName: ' 合成名甲 ' } });
+    expect(same.statusCode).toBe(200);
+    expect(MultiNameViewSchema.parse(same.json())).toMatchObject({ codeId, codeRaw });
+    expect(await names.decision(item.id)).toBe('same_item');
+    expect(await items.get(item.id)).toMatchObject({ displayName: '合成名甲', sharedCodeFlag: false });
+
+    const shared = await app.inject({ method: 'POST', url, headers, payload: { mode: 'shared_code' } });
+    expect(shared.statusCode).toBe(200);
+    expect(MultiNameViewSchema.parse(shared.json())).toEqual(MultiNameViewSchema.parse(same.json()));
+    expect(await names.decision(item.id)).toBe('shared_code');
+    expect(await items.get(item.id)).toMatchObject({ displayName: '合成名甲', sharedCodeFlag: true });
+
+    const legacyItem = anItem({ kind: 'packaging' });
+    const legacyCodeId = entityId('multi-name-legacy-code');
+    await items.save(legacyItem);
+    await codes.save({ ...code, id: legacyCodeId, codeRaw: '30006102', codeNorm: '30006102', itemId: legacyItem.id });
+    await handle.db.insert(schema.itemNames).values([
+      { itemId: legacyItem.id, nameRaw: '合成 A', nameNorm: '合成 A', seenCount: 2 },
+      { itemId: legacyItem.id, nameRaw: '合成 Ａ', nameNorm: '合成 A', seenCount: 3 },
+    ]);
+    const queueUrl = '/api/v1/master/multi-name';
+    const before = await app.inject({ method: 'GET', url: queueUrl, headers });
+    expect(before.json().items).toContainEqual(expect.objectContaining({ codeId: legacyCodeId }));
+    const merged = await app.inject({
+      method: 'POST', url: `${queueUrl}/${legacyCodeId}/resolve`, headers,
+      payload: { mode: 'same_item', displayName: '合成 A' },
+    });
+    expect(merged.statusCode).toBe(200);
+    expect(MultiNameViewSchema.parse(merged.json())).toEqual({
+      codeId: legacyCodeId, codeRaw: '30006102', names: [{ nameRaw: '合成 A', count: 2 }],
+    });
+    expect(await names.decision(legacyItem.id)).toBe('same_item');
+    const after = await app.inject({ method: 'GET', url: queueUrl, headers });
+    expect(after.json().items).toEqual([expect.objectContaining({ codeId })]);
+  } finally {
+    await app.close();
+    await handle.close();
+  }
 });
 
 it('逐行关联工厂在途记录后返回原表行，且从待关联队列移除', async () => {

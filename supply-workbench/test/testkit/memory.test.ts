@@ -61,6 +61,50 @@ describeUnitOfWorkContract(() => {
   };
 });
 
+it('独立工作单元等待前一笔回滚，再读取已提交的数据', async () => {
+  const { unitOfWork, stores } = memory();
+  const rolledBack = aUser();
+  const committed = aUser();
+  let started = () => {};
+  let release = () => {};
+  const entered = new Promise<void>((resolve) => { started = resolve; });
+  const finish = new Promise<void>((resolve) => { release = resolve; });
+  const first = unitOfWork.run(async (tx) => {
+    await tx.users.save(rolledBack);
+    started();
+    await finish;
+    throw new Error('合成回滚');
+  });
+  const firstRejected = expect(first).rejects.toThrow('合成回滚');
+  await entered;
+  const second = unitOfWork.run(async (tx) => {
+    const previous = await tx.users.find(rolledBack.id);
+    await tx.users.save(committed);
+    return previous;
+  });
+  await Promise.resolve();
+  release();
+  await firstRejected;
+  expect(await second).toBeUndefined();
+  expect(await stores.users.find(committed.id)).toEqual(committed);
+});
+
+it('工作单元可等待同一异步链的嵌套工作单元回滚', async () => {
+  const { unitOfWork, stores } = memory();
+  const outer = aUser();
+  const inner = aUser();
+  await unitOfWork.run(async (tx) => {
+    await tx.users.save(outer);
+    await expect(unitOfWork.run(async (nested) => {
+      expect(await nested.users.find(outer.id)).toEqual(outer);
+      await nested.users.save(inner);
+      throw new Error('嵌套回滚');
+    })).rejects.toThrow('嵌套回滚');
+  });
+  expect(await stores.users.find(outer.id)).toEqual(outer);
+  expect(await stores.users.find(inner.id)).toBeUndefined();
+});
+
 describeImportTemplateContract(proofTemplate(), {
   ownFile: book('own.csv'),
   foreignFile: book('other.csv'),

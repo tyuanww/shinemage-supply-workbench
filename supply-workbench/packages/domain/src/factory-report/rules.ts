@@ -1,5 +1,9 @@
 import { normalizeText } from '../identity/text.js';
 
+export function normalizeFactoryReportCode(raw: string | null | undefined): string {
+  return (raw ?? '').normalize('NFKC').trim().toUpperCase();
+}
+
 /** 供应商原文和上传时选的代工厂不是同一个名字。空的不算不一致。 */
 export function isFactoryMismatch(supplier: string | null, factoryName: string | null): boolean {
   if (supplier === null || factoryName === null) return false;

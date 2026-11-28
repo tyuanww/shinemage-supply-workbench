@@ -41,3 +41,10 @@ it('contracts 用值导入 application 也会被拦住', () => {
     'r3-contracts-application-type-only',
   );
 });
+
+it('内存事务只在 box 中允许导入 Node 异步上下文', () => {
+  const report = violationReport('r5-testkit-memory-context');
+  expect(report).toMatch(/r5-testkit-only-domain-application: .*memory\/unit-of-work\.ts → (node:)?async_hooks/);
+  expect(report).toMatch(/r5-testkit-memory-transaction-context: .*memory\/box\.ts → (node:)?fs/);
+  expect(report).not.toMatch(/memory\/box\.ts → (node:)?async_hooks/);
+});

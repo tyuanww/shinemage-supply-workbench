@@ -16,6 +16,13 @@ export function itemCodeRepository(box: MemoryBox) {
   const repo = idRepository(() => box.current.itemCodes, '编码');
   return {
     ...repo,
+    lock: repo.get,
+    async lockMany(ids: readonly string[]) {
+      return [...new Set(ids)].sort().flatMap((id) => {
+        const code = box.current.itemCodes.get(id);
+        return code === undefined ? [] : [code];
+      });
+    },
     async listByNorm(codeNorm: string) {
       return [...box.current.itemCodes.values()].filter((row) => row.codeNorm === codeNorm);
     },

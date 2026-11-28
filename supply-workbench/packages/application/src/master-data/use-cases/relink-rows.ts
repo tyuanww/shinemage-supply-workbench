@@ -17,13 +17,17 @@ export async function prepareCodeRelink(tx: UnitOfWorkStores, codeNorms: readonl
   for (;;) {
     const rows = (await rowsFor(tx, codeNorms)).filter((row) => linkFacts(row) !== null);
     const pending = rows.flatMap((row) => sources.has(row.factoryPartyId) ? [] : [row.factoryPartyId]);
-    if (pending.length === 0) return rows.sort(compareFactoryReportWrites);
+    if (pending.length === 0) {
+      const locked = await tx.factoryReports.lockRelinkRows({ codeNorms, candidates: rows });
+      return locked.filter((row) => linkFacts(row) !== null).sort(compareFactoryReportWrites);
+    }
     await tx.factoryReports.lockReportSources(pending);
     for (const id of pending) sources.add(id);
   }
 }
 
 export async function relinkPreparedRows(tx: UnitOfWorkStores, rows: readonly FactoryReportRow[]): Promise<string[]> {
+  if (rows.length === 0) return [];
   const links = await approvedLinks(tx);
   const lineIds: string[] = [];
   for (const row of rows) {

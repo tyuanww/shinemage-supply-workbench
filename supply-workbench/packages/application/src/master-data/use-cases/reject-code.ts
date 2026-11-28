@@ -11,7 +11,7 @@ export const makeRejectCode =
     const reason = requireText(input.reason, '驳回要写原因');
     const at = deps.clock.now();
     await deps.uow.run(async (tx) => {
-      const code = await tx.itemCodes.get(input.codeId);
+      const code = await tx.itemCodes.lock(input.codeId);
       const after = decided(code, { itemId: null, status: 'rejected', at });
       await tx.itemCodes.save(after);
       await tx.audit.record(auditOf({ action: 'code.reject', subject: after, ctx: { actor, at, before: code, after: { ...after, reason }, entity: '编码' } }));

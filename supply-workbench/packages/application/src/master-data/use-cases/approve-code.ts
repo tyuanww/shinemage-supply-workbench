@@ -7,7 +7,7 @@ import { auditOf } from '../../shared/audit.js';
 import { authorize } from '../../shared/authorize.js';
 import { ValidationFailedError } from '../../shared/errors.js';
 import { refreshLineProjection } from '../../shared/line-projection.js';
-import { backfillItem } from './backfill.js';
+import { backfillItems } from './backfill.js';
 import { itemDraft } from './drafts.js';
 
 export const makeApproveCode =
@@ -16,10 +16,10 @@ export const makeApproveCode =
     authorize(actor, 'master.review');
     const at = deps.clock.now();
     await deps.uow.run(async (tx) => {
-      const code = await tx.itemCodes.get(input.codeId);
+      const code = await tx.itemCodes.lock(input.codeId);
       const itemId = await itemFor(tx, { ids: deps.ids, input, at });
       await tx.itemCodes.save({ ...code, itemId, status: 'approved', updatedAt: at });
-      const lineIds = await backfillItem(tx, { codeNorm: code.codeNorm, itemId, at });
+      const lineIds = await backfillItems(tx, { items: [{ codeNorm: code.codeNorm, itemId }], at });
       if (lineIds.length > 0) await refreshLineProjection(tx, lineIds);
       await tx.audit.record(auditOf({ action: 'code.approve', subject: code, ctx: { actor, at, before: code, entity: '编码' } }));
     });

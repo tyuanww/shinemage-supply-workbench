@@ -100,7 +100,7 @@ export function fileStore(box: MemoryBox): FileStore {
 export function auditLog(box: MemoryBox): AuditLog {
   return {
     async record(entry) {
-      if (box.depth === 0) throw new Error('审计只能在工作单元里写');
+      if (box.transaction.getStore()?.active !== true) throw new Error('审计只能在工作单元里写');
       box.current.audit.push(entry);
     },
     async hasEntry(query) {

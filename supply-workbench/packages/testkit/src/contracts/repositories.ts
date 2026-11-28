@@ -102,6 +102,74 @@ export function describeFactoryReportRepositoryContract(make: () => FactoryRepor
     repo: make(),
     sample: aFactoryStockRow,
   }));
+
+  it('按编码读取和准备重联使用相同的工厂品号及条码规范', async () => {
+    const repo = make();
+    const row = aFactoryStockRow({
+      kind: 'in_transit',
+      inTransit: { poRaw: 'P00012', poNorm: 'P00012', itemCodeRaw: ' ｋ１２３ ', barcodeRaw: 'Ａ  Ｂ', nameRaw: null, qtyRequired: 50 },
+    });
+    await repo.save(row);
+    for (const code of ['Ｋ１２３', ' k123 ', ' a  b ']) {
+      expect((await repo.listByCodeNorm(code)).map(({ id }) => id)).toEqual([row.id]);
+      expect((await repo.lockRelinkRows({ codeNorms: [code], candidates: [row] })).map(({ id }) => id)).toEqual([row.id]);
+    }
+    for (const code of ['A B', '　']) {
+      expect(await repo.listByCodeNorm(code)).toEqual([]);
+      expect(await repo.lockRelinkRows({ codeNorms: [code], candidates: [row] })).toEqual([]);
+    }
+  });
+
+  describeRelinkRowsContract(make);
+
+  it('按编码仍读出无独立采购单的需求，准备重联时略过', async () => {
+    const repo = make();
+    const row = aFactoryStockRow({
+      kind: 'demand',
+      demand: { role: 'material', blockMaterialPoRaw: 'P00012', poNorm: null, itemCodeRaw: 'Ｋ１２３', nameRaw: null, slots: [] },
+    });
+    await repo.save(row);
+    expect((await repo.listByCodeNorm('k123')).map(({ id }) => id)).toEqual([row.id]);
+    expect(await repo.lockRelinkRows({ codeNorms: ['k123'], candidates: [row] })).toEqual([]);
+  });
+}
+
+function describeRelinkRowsContract(make: () => FactoryReportRepository): void {
+  it('重联按在途、需求和行 ID 排序，重复候选只返回一次', async () => {
+    const repo = make();
+    const transitA = relinkTransit('transit-a');
+    const transitB = relinkTransit('transit-b');
+    const demand = aFactoryStockRow({
+      id: entityId('demand-a'), kind: 'demand',
+      demand: { role: 'material', blockMaterialPoRaw: 'P00012', poNorm: 'P00012', itemCodeRaw: 'K123', nameRaw: null, slots: [] },
+    });
+    for (const row of [demand, transitB, transitA]) await repo.save(row);
+    const candidates = [demand, transitB, transitB, transitA, demand];
+    expect((await repo.lockRelinkRows({ codeNorms: ['k123'], candidates })).map(({ id }) => id))
+      .toEqual([transitA.id, transitB.id, demand.id]);
+  });
+
+  it('从已发现候选重读当前工厂、人工关联和原始编码', async () => {
+    const repo = make();
+    const manual = relinkTransit('now-manual');
+    const moved = relinkTransit('moved-factory');
+    const changed = relinkTransit('changed-code');
+    const retained = relinkTransit('retained-code');
+    for (const row of [manual, moved, changed, retained]) await repo.save(row);
+    const candidates = await repo.listByCodeNorm('k123');
+    expect(candidates).toHaveLength(4);
+    await repo.save({ ...manual, linkStatus: 'manual' });
+    await repo.save({ ...moved, factoryPartyId: entityId('other-factory') });
+    await repo.save({ ...changed, inTransit: { ...changed.inTransit, itemCodeRaw: 'NOT-REQUESTED', barcodeRaw: 'NOT-MATCHING' } });
+    const latest = { ...retained, inTransit: { ...retained.inTransit, nameRaw: '最新名称', barcodeRaw: '最新条码' } };
+    await repo.save(latest);
+    expect(await repo.lockRelinkRows({ codeNorms: ['Ｋ１２３'], candidates })).toEqual([latest]);
+  });
+}
+
+function relinkTransit(id: string) {
+  const inTransit = { poRaw: 'P00012', poNorm: 'P00012', itemCodeRaw: ' ｋ１２３ ', barcodeRaw: 'BAR', nameRaw: '旧名称', qtyRequired: 50 };
+  return { ...aFactoryStockRow({ id: entityId(id), kind: 'in_transit' }), inTransit };
 }
 
 export function describeProductRepositoryContract(make: () => ProductRepository): void {

@@ -18,6 +18,7 @@ const importers = `${here}packages/importers/`;
 const renderers = `${here}packages/report-renderers/`;
 const auth = `${here}packages/auth/`;
 const testkit = `${here}packages/testkit/`;
+const memoryBox = `${testkit}src/memory/box\\.ts$`;
 const apps = `${here}apps/`;
 const adapters = [persistence, importers, renderers, auth];
 const adapterNames = ['persistence', 'importers', 'report-renderers', 'auth'];
@@ -74,8 +75,15 @@ const forbidden: IForbiddenRuleType[] = [
   {
     name: 'r5-testkit-only-domain-application',
     severity: 'error',
-    from: { path: testkit },
+    from: { path: testkit, pathNot: memoryBox },
     to: { pathNot: [testkit, domain, application] },
+  },
+  {
+    name: 'r5-testkit-memory-transaction-context',
+    severity: 'error',
+    comment: '只在内存事务模型中使用 Node 异步上下文区分嵌套事务',
+    from: { path: memoryBox },
+    to: { pathNot: [testkit, domain, application, '^(?:node:)?async_hooks$'] },
   },
   {
     name: 'r5-testkit-only-from-tests',

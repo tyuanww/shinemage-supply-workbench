@@ -1,8 +1,7 @@
 import type { FileStore } from '../../application/src/ports/file-store.js';
 import type { UnitOfWork, UnitOfWorkStores } from '../../application/src/ports/unit-of-work.js';
 import type { UserDirectory } from '../../application/src/ports/user-directory.js';
-import { emptyState } from './memory/state.js';
-import type { MemoryBox } from './memory/box.js';
+import { createMemoryBox, type MemoryBox } from './memory/box.js';
 import { fileStore, userDirectory } from './memory/services.js';
 import { memoryUnitOfWork, storesOf } from './memory/unit-of-work.js';
 
@@ -13,7 +12,7 @@ export function createMemory(): {
   readonly directory: UserDirectory;
   readonly files: FileStore;
 } {
-  const box: MemoryBox = { current: emptyState(), depth: 0 };
+  const box = createMemoryBox();
   return {
     box,
     unitOfWork: memoryUnitOfWork(box),

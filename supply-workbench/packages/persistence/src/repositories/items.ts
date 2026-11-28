@@ -15,6 +15,11 @@ export function itemRepository(db: AppDatabase): ItemRepository {
       if (found === undefined) throw new NotFoundError('物料', id);
       return found;
     },
+    async lock(id) {
+      const [row] = await db.select().from(items).where(eq(items.id, id)).for('update');
+      if (row === undefined) throw new NotFoundError('物料', id);
+      return toItem(row);
+    },
     find: (id) => findItem(db, id),
     async save(entity) {
       await db.insert(items).values(entity).onConflictDoUpdate({ target: items.id, set: entity });
